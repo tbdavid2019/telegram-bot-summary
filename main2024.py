@@ -15,49 +15,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters, ApplicationBuilder
 from bs4 import BeautifulSoup
 from telegram.helpers import escape_markdown
-from pymongo import MongoClient
-from datetime import datetime
-from webvtt import WebVTT
-
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
-# 從環境變數中提取 SMTP 設定
-smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
-smtp_port = int(os.environ.get("SMTP_PORT", 465))  # 預設使用 SSL
-smtp_user = os.environ.get("SMTP_USER", "your_email@gmail.com")
-smtp_password = os.environ.get("SMTP_PASSWORD", "your_password")
-smtp_cc_emails = os.environ.get("SMTP_CC_EMAILS", "").split(",")  # 多個 CC 收件人以逗號分隔
-enable_email = int(os.environ.get("ENABLE_EMAIL", 1))  # 控制是否啟用發送郵件功能，默認為 1（啟用）
-
-def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
-    if not enable_email:
-        print("Email sending is disabled by configuration.")
-        return  # 如果禁用郵件功能，直接返回
-    
-    try:
-        # 設定郵件主體
-        message = MIMEMultipart()
-        message["From"] = smtp_user
-        message["To"] = recipient_email
-        message["CC"] = ", ".join(smtp_cc_emails)
-        message["Subject"] = subject
-
-        # 添加郵件正文
-        message.attach(MIMEText(summary, "plain", "utf-8"))
-
-        # 發送郵件
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-            server.login(smtp_user, smtp_password)
-            server.sendmail(
-                smtp_user,
-                [recipient_email] + smtp_cc_emails,
-                message.as_string(),
-            )
-        print("Email sent successfully.")
-    except Exception as e:
-        print(f"Failed to send email: {e}")
 
 
 # 從環境變數中取得 OpenAI API Key
@@ -72,13 +29,7 @@ use_audio_fallback = int(os.environ.get("USE_AUDIO_FALLBACK", "0"))
 # 添加 GROQ API Key
 groq_api_key = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
 base_url = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
-# 添加 mongodb 紀錄功能
-mongo_uri = os.environ.get("MONGO_URI", "")
-mongo_client = MongoClient(mongo_uri)
-db = mongo_client["bot_database"]
-summary_collection = db["summaries"]
-# 從環境變量中獲取設置，預設為 1（開啟）
-show_processing = int(os.environ.get("SHOW_PROCESSING", "1"))
+
 
 
 
@@ -133,7 +84,7 @@ def summarize(text_array):
 
         summaries = []
         system_messages = [
-            {"role": "system", "content": "將以下原文總結為五個部分：1.總結 (Overall Summary)：約100字~300字概括。2.觀點 (Viewpoints):內容中的看法與你的看法。3.摘要 (Abstract)： 創建6到10個帶有適當表情符號的重點摘要。4.關鍵字 (Key Words)：列出內容中重點關鍵字。 5.容易懂(Easy Know)：一個讓十二歲青少年可以看得動懂的段落。確保生成的文字都是{lang} 繁體中文為主"}
+            {"role": "system", "content": "將以下原文總結為五個部分：1.總結 (Overall Summary)：約100字~300字概括。2.觀點 (Viewpoints):內容中的看法與你的看法。3.摘要 (Abstract)： 創建6到10個帶有適當表情符號的重點摘要。4.關鍵字 (Key Words)：列出內容中重點關鍵字。 5.容易懂(Easy Know)：一個讓十二歲青少年可以看得動懂的段落。確保生成的文字都是{lang}為主"}
         ]
 
         with ThreadPoolExecutor() as executor:
@@ -172,52 +123,40 @@ def summarize(text_array):
         print(f"Error: {e}")
         return "Unknown error! Please contact the owner. ok@vip.david888.com"
 
-def clean_subtitle(subtitle_content):
-    # 移除 WEBVTT 標頭
-    subtitle_content = re.sub(r'WEBVTT\n\n', '', subtitle_content)
-    
-    # 移除時間戳和位置資訊
-    subtitle_content = re.sub(r'\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}.*\n', '', subtitle_content)
-    
-    # 移除空行
-    subtitle_content = re.sub(r'\n+', '\n', subtitle_content)
-    
-    # 移除行首的數字標記（如果有的話）
-    subtitle_content = re.sub(r'^\d+\n', '', subtitle_content, flags=re.MULTILINE)
-    
-    return subtitle_content.strip()
-
 def extract_youtube_transcript(youtube_url):
     ydl_opts = {
         'writesubtitles': True,
         'writeautomaticsub': True,
         'skip_download': True,
-        'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
+        'subtitleslangs': ['zh-Hant', 'zh-Hans', 'zh-TW' , 'zh', 'en'],  # 優先順序：繁體中文，簡體中文，中文，英文
         'outtmpl': '/tmp/%(id)s.%(ext)s',
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
-            video_id = info['id']
-            
             if 'subtitles' in info or 'automatic_captions' in info:
                 ydl.download([youtube_url])
+                video_id = info['id']
                 
                 subtitle_content = None
-                for lang in ['en','zh-Hant', 'zh-Hans', 'zh']:
+                for lang in ['zh-Hant', 'zh-Hans', 'zh', 'en']:
                     subtitle_file = f"/tmp/{video_id}.{lang}.vtt"
                     if os.path.exists(subtitle_file):
                         with open(subtitle_file, 'r', encoding='utf-8') as file:
                             subtitle_content = file.read()
                         os.remove(subtitle_file)
                         print(f"Found and using {lang} subtitle.")
-                        break
+                        break  # 找到第一個可用的字幕就停止
+
+                # 刪除所有剩餘的字幕文件
+                for file in os.listdir('/tmp'):
+                    if file.startswith(video_id) and file.endswith('.vtt'):
+                        os.remove(f"/tmp/{file}")
+                        print(f"Removed unused subtitle file: {file}")
 
                 if subtitle_content:
-                    # 清理字幕內容
-                    cleaned_content = clean_subtitle(subtitle_content)
-                    return cleaned_content
+                    return subtitle_content
                 else:
                     print("No suitable subtitles found in specified languages.")
                     return "no transcript"
@@ -225,9 +164,8 @@ def extract_youtube_transcript(youtube_url):
                 print("No subtitles or automatic captions available for this video.")
                 return "no transcript"
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return "error"
-
+        print(f"Error in extract_youtube_transcript: {e}")
+        return "no transcript"
 
 
 
@@ -539,11 +477,7 @@ def set_my_commands(telegram_token):
         print("Commands set successfully.")
     else:
         print(f"Failed to set commands: {response.text}")
-
-def is_url(text):
-    url_pattern = re.compile(r'https?://\S+|www\.\S+')
-    return bool(url_pattern.match(text))
-
+        
 async def handle(action, update, context):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
@@ -552,18 +486,16 @@ async def handle(action, update, context):
         await context.bot.send_message(chat_id=chat_id, text="Sorry, you are not authorized to use this bot.")
         return
 
-    processing_message = None
-    if show_processing:
-        processing_message = await context.bot.send_message(chat_id=chat_id, text="處理中，請稍候...")
+    # 發送「處理中」提示
+    processing_message = await context.bot.send_message(chat_id=chat_id, text="處理中，請稍候...")
 
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家機器人之一。版本20240921。我還活著。我會幫你自動總結為中文的內容。")
+                                                text="我是江家機器人之一。版本20240908。請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
-            I can summarize text, URLs, PDFs and YouTube video for you. 
-            請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為繁體中文的內容。
+            I can summarize text, URLs, PDFs and YouTube video for you. 請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為中文的內容。
             Here are the available commands:
             /start - Start the bot
             /help - Show this help message
@@ -574,120 +506,47 @@ async def handle(action, update, context):
             """
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text)
         elif action == 'summarize':
-            try:
-                user_input = update.message.text
-                text_array = process_user_input(user_input)
+            user_input = update.message.text
+            text_array = process_user_input(user_input)
 
-                if text_array:
-                    summary = summarize(text_array)
-                    
-                    if is_url(user_input):
-                        original_url = user_input
-                        title = get_web_title(user_input)
-                        summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
-                    else:
-                        original_url = None  # 設置為 None，如果不是 URL
-                        summary_with_original = f"📌 \n{summary}\n"
+            if text_array:
+                summary = summarize(text_array)
+                original_url = user_input
+                title = get_web_title(user_input)
+                summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
 
-                    summary_with_original_escaped = escape_markdown(summary_with_original, version=2)
+                summary_with_original_escaped = escape_markdown(summary_with_original, version=2)
 
-                    # 新增：將摘要寄送到指定郵箱，使用 title 作為 email 標題
-                    send_summary_via_email(summary_with_original, "jeinggoway.cats@blogger.com", subject=title)
-
-
-                    # 存儲摘要資訊到 MongoDB
-                    summary_data = {
-                        "telegram_id": user_id,
-                        "url": original_url,  # 可以是 None
-                        "summary": summary_with_original,
-                        "timestamp": datetime.now()
-                    }
-                    summary_collection.insert_one(summary_data)
-
-                    if show_processing and processing_message:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
- 
-                    # 處理長消息
-                    if len(summary_with_original_escaped) > 4000:
-                        parts = [summary_with_original_escaped[i:i+4000] for i in range(0, len(summary_with_original_escaped), 4000)]
-                        for part in parts:
-                            await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=part,
-                                parse_mode='MarkdownV2'
-                            )
-                    else:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=summary_with_original_escaped,
-                            parse_mode='MarkdownV2'
-                        )
-                else:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text="無法處理輸入的文本。請確保提供了有效的文本或URL。"
-                    )
-
-            except Exception as e:
-                print(f"Error in summarize action: {e}")
+                # 刪除「處理中」提示，並發送最終摘要結果
+                await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text="處理您的請求時發生錯誤，請稍後再試。"
+                    text=summary_with_original_escaped,
+                    parse_mode='MarkdownV2'
                 )
         elif action == 'file':
-            try:
-                file = await update.message.document.get_file()
-                file_path = f"/tmp/{file.file_id}.pdf"
-                await file.download_to_drive(file_path)
-                
-                reader = PdfReader(file_path)
-                text = ""
-                total_pages = len(reader.pages)
-                
-                for i, page in enumerate(reader.pages):
-                    text += page.extract_text() + "\n"
-                    if i % 10 == 0:  # 每處理 10 頁更新一次進度
-                        progress = f"正在處理 PDF：{i+1}/{total_pages} 頁"
-                        if processing_message:
-                            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
-                        else:
-                            processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
+            file = await update.message.document.get_file()
+            file_path = f"/tmp/{file.file_id}.pdf"
+            await file.download_to_drive(file_path)
+            
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
 
-                os.remove(file_path)
+            os.remove(file_path)
 
-                # 分批處理文本，避免一次性處理過多內容
-                chunk_size = 5000  # 每次處理 5000 字符
-                text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-                summary = ""
+            text_array = text.split("\n")
+            summary = summarize(text_array)
 
-                for chunk in text_chunks:
-                    chunk_summary = summarize([chunk])
-                    summary += chunk_summary + "\n\n"
-
-                # 轉義 Markdown 特殊字符
-                escaped_summary = escape_markdown(summary, version=2)
-
-                if processing_message:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-
-                # 分批發送摘要
-                if len(escaped_summary) > 4000:
-                    parts = [escaped_summary[i:i+4000] for i in range(0, len(escaped_summary), 4000)]
-                    for part in parts:
-                        await context.bot.send_message(chat_id=chat_id, text=part, parse_mode='MarkdownV2')
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=escaped_summary, parse_mode='MarkdownV2')
-
-            except Exception as e:
-                print(f"Error processing PDF: {e}")
-                await context.bot.send_message(chat_id=chat_id, text=f"處理 PDF 時發生錯誤：{str(e)}，請稍後再試。")
+            # 刪除「處理中」提示，並發送總結結果
+            await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+            await context.bot.send_message(chat_id=chat_id, text=summary, reply_markup=get_inline_keyboard_buttons(summary))
 
     except Exception as e:
-        if processing_message:
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text="發生錯誤，請稍後再試。")
-        else:
-            await context.bot.send_message(chat_id=chat_id, text="發生錯誤，請稍後再試。")
-        print(f"Error: {e}")
+        # 發生錯誤時更新提示為錯誤信息
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text="發生錯誤，請稍後再試。")
+        print(f"Error: {e}")    
 
 def main():
     try:

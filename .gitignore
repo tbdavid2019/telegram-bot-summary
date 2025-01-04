@@ -1,3 +1,4 @@
 rebuild.sh
 main_production.py
+.env
 
