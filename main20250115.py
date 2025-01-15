@@ -30,32 +30,6 @@ smtp_user = os.environ.get("SMTP_USER", "your_email@gmail.com")
 smtp_password = os.environ.get("SMTP_PASSWORD", "your_password")
 smtp_cc_emails = os.environ.get("SMTP_CC_EMAILS", "").split(",")  # 多個 CC 收件人以逗號分隔
 enable_email = int(os.environ.get("ENABLE_EMAIL", 1))  # 控制是否啟用發送郵件功能，默認為 1（啟用）
-# discord 設定
-discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
-enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默認為 0（不啟用）
-
-
-
-def send_to_discord(content):
-    """
-    發送訊息到 Discord Webhook
-    """
-    if not enable_discord_webhook:
-        print("Discord Webhook is disabled by configuration.")
-        return  # 如果 Webhook 功能被禁用，直接返回
-    
-    if not discord_webhook_url:
-        print("Discord Webhook URL is not set.")
-        return
-    
-    try:
-        data = {"content": content}
-        response = requests.post(discord_webhook_url, json=data)
-        response.raise_for_status()
-        print("Message sent to Discord successfully.")
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to send message to Discord: {e}")
-
 
 def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
     if not enable_email:
@@ -646,11 +620,6 @@ async def handle(action, update, context):
                     if show_processing and processing_message:
                         await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
  
-                    # 發送摘要到 Discord Webhook（如果啟用）
-                    if enable_discord_webhook:
-                        discord_message = f"🔔 新的摘要已生成：\n{summary_with_original}"
-                        send_to_discord(discord_message)
-
                     # 處理長消息
                     if len(summary_with_original_escaped) > 4000:
                         parts = [summary_with_original_escaped[i:i+4000] for i in range(0, len(summary_with_original_escaped), 4000)]
@@ -713,12 +682,6 @@ async def handle(action, update, context):
 
                 if processing_message:
                     await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-
-
-                # 發送 PDF 摘要到 Discord Webhook（如果啟用）
-                if enable_discord_webhook:
-                    discord_message = f"🔔 已成功處理一份 PDF 文件，摘要內容如下：\n{summary}"
-                    send_to_discord(discord_message)
 
                 # 分批發送摘要
                 if len(escaped_summary) > 4000:
