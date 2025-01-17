@@ -11,6 +11,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 - **無字幕處理**：當影片無字幕時，可以啟用聽力辨識生成字幕。
 - **郵件功能**：自動將摘要結果發送到指定的收件人或群組郵箱（可配置 SMTP）。
 - 使用 `.env` 文件簡化環境變數配置。
+- **YouTube 私有影片支援**:支援需要登入才能觀看的 YouTube 影片處理。
 
 ---
 
@@ -38,6 +39,17 @@ Telegram bot 可濃縮文字、URL、PDF 和 YouTube 影片的重點摘要。
 以下為包含英文與繁體中文的設置指導。
 
 ### Docker 設置指南
+
+##### YouTube 私有影片處理
+
+若要處理需要登入才能觀看的 YouTube 影片，請依照以下步驟：
+
+在本地電腦執行以下命令來導出 cookies：
+```bash
+yt-dlp --cookies-from-browser chrome -F "視頻URL" --skip-download
+```
+將產生的 cookies.txt 檔案放入專案根目錄
+
 
 #### 1. 拉取 Docker 映像
 從 Docker Hub 拉取映像，請執行以下命令：

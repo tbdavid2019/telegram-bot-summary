@@ -316,7 +316,8 @@ def audio_transcription(youtube_url):
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'ffprobe_location': '/usr/bin/ffprobe'
+            'ffprobe_location': '/usr/bin/ffprobe',
+            'cookiesfile': 'youtube-cookies.txt'  # 添加這一行來指定 cookies 文件
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -442,7 +443,8 @@ async def handle_yt2audio(update, context):
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'ffprobe_location': '/usr/bin/ffprobe'
+            'ffprobe_location': '/usr/bin/ffprobe',
+            'cookiesfile': 'youtube-cookies.txt'  # 添加這一行來指定 cookies 文件
         }
 
 

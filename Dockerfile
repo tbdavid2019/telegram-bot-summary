@@ -18,6 +18,8 @@ WORKDIR /app
 
 # 複製應用程式碼到容器
 COPY main.py .
+# 複製 cookies 文件到容器
+COPY cookies.txt .
 
 # 設置環境變量以明確指定 ffmpeg 的位置
 ENV PATH="/usr/bin:${PATH}"
