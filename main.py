@@ -317,7 +317,7 @@ def audio_transcription(youtube_url):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiesfile': 'youtube-cookies.txt'  # 添加這一行來指定 cookies 文件
+            'cookies_from_browser': 'chrome'  # 添加這一行來指定 cookies 文件
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -433,10 +433,14 @@ async def handle_yt2audio(update, context):
     url = user_input[1]  # 取得 YouTube URL
 
     try:
+        # 生成唯一文件名稱
+        temp_uuid = str(uuid.uuid4())
+        output_template = f"/tmp/{temp_uuid}.%(ext)s"
+
         # 使用 yt-dlp 下載音頻
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'/tmp/{str(uuid.uuid4())}.%(ext)s',  # 直接使用這個模板來生成文件名
+            'outtmpl': output_template,  # 直接使用這個模板來生成文件名
             'ffmpeg_location': '/usr/bin/ffmpeg',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -444,30 +448,19 @@ async def handle_yt2audio(update, context):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiesfile': 'youtube-cookies.txt'  # 添加這一行來指定 cookies 文件
         }
 
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)  # 下載音頻
 
-        # 不再使用 replace，直接使用下載後的文件
-        output_path = ydl_opts['outtmpl']  # 這裡是帶有 "%(ext)s" 的模板
+        # 確保獲取到的 mp3 文件名正確
+        output_path = f"/tmp/{temp_uuid}.mp3"
 
-        # 如果你確定已經下載為 .mp3，可以直接用文件路徑
-        output_path = output_path.replace("%(ext)s", "mp3")  # 如果你想保留這行也可以，確保文件是 mp3 格式
-
-        audio_file = AudioSegment.from_file(output_path)        
- 
-
-
-            
         # 傳送音頻檔案給 Telegram user
         with open(output_path, 'rb') as audio:
             await context.bot.send_audio(chat_id=chat_id, audio=audio)
 
         os.remove(output_path)  # 刪除臨時檔案       
-  
 
     except Exception as e:
         print(f"Error: {e}")
