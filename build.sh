@@ -1,3 +1,6 @@
+
+docker builder prune
+docker build --no-cache -t telegram-bot-summary .
 docker build -t telegram-bot-summary .
 docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest
 docker push tbdavid2019/telegram-bot-summary:latest

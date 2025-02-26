@@ -139,77 +139,112 @@ async def search_results(keywords):
     results = await AsyncDDGS().text(keywords, region=ddg_region, safesearch='off', max_results=6)
     return results
 
+
 def summarize(text_array):
-    def create_chunks(paragraphs):
-        chunks = []
-        chunk = ''
-        for paragraph in paragraphs:
-            if len(chunk) + len(paragraph) < chunk_size:
-                chunk += paragraph + ' '
-            else:
-                chunks.append(chunk.strip())
-                chunk = paragraph + ' '
-        if chunk:
-            chunks.append(chunk.strip())
-        return chunks
-
     try:
-        text_chunks = create_chunks(text_array)
-        text_chunks = [chunk for chunk in text_chunks if chunk]
-
-        summaries = []
+        # 將所有段落合併成一個完整的文本
+        full_text = "\n".join(text_array)
+        
+        # 定義系統訊息，要求返回純文字且不含 Markdown 格式符號
         system_messages = [
             {
                 "role": "system",
                 "content": (
-                    "將以下原文總結為五個部分，並以清晰的結構呈現，確保結果以 繁體中文 為主：\n"
-                    "❶ 總結 (Overall Summary)：撰寫約300字或更多，概括內容的主要議題與結論，語氣務實但易於理解。\n"
-                    "❷ 觀點 (Viewpoints)：列出原文中提到的3~7個主要觀點，並適當補充您對這些觀點的評論或看法，條列呈現。\n"
-                    "❸ 摘要 (Abstract)：摘錄6到10個核心重點，簡潔有力，並適當搭配表情符號（如✅、⚠️、📌）凸顯關鍵信息。\n"
-                    "❹ 關鍵字 (Key Words)：列出4~8個最重要的關鍵字，避免冗長描述。\n"
-                    "❺ 容易懂 (Easy Know)：使用淺顯易懂的語言，將內容濃縮成一段約80~120字的解釋，適合十二歲孩子理解。\n"
+                    "請將以下原文總結為五個部分，並以純文字形式返回，不要包含任何 Markdown 格式符號，以清晰的結構呈現，確保結果以繁體中文為主：\n"
+                    "❶ 總結(Overall Summary)：撰寫約300字或更多，概括內容的主要議題與結論，語氣務實且易於理解。\n"
+                    "❷ 觀點(Viewpoints)：列出原文中提到的3~7個主要觀點，並適當補充對這些觀點的評論或看法，條列呈現。\n"
+                    "❸ 摘要(Abstract)：摘錄6到10個核心重點，簡潔有力，並適當搭配表情符號（如✅、⚠️、📌）凸顯關鍵信息。\n"
+                    "❹ 關鍵字(Key Words)：列出數個最重要的關鍵字，避免冗長描述。\n"
+                    "❺ 容易懂(Easy Know)：使用淺顯易懂的語言，將內容濃縮成一段約80~120字的解釋，適合十二歲孩子理解。\n"
                 )
             }
         ]
-        #         system_messages = [
-        #     {"role": "system", "content": "將以下原文總結為五個部分：1.總結 (Overall Summary)：約100字~300字概括。2.觀點 (Viewpoints):內容中的看法與你的看法。3.摘要 (Abstract)： 創建6到10個帶有適當表情符號的重點摘要。4.關鍵字 (Key Words)：列出內容中重點關鍵字。 5.容易懂(Easy Know)：一個讓十二歲青少年可以看得動懂的段落。確保生成的文字都是 繁體中文為主"}
-        # ]
+        
+        # 建構 prompt，直接附上整個文本
+        prompt = "總結 the following text:\n" + full_text
+        
+        # 呼叫 GPT API 生成摘要
+        summary = call_gpt_api(prompt, system_messages)
 
-        with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(call_gpt_api, f"總結 the following text:\n{chunk}", system_messages) for chunk in text_chunks]
-            summaries = [future.result() for future in tqdm(futures, total=len(text_chunks), desc="Summarizing")]
+        # 加入機器人宣傳語
+        summary += "\n\n✡ Oli 小濃縮 Summary bot 為您濃縮重點 ✡"
 
-        final_summary = {
-            "overall_summary": "",
-            "viewpoints": "",
-            "abstract": "",
-            "keywords": ""
-        }
-        for summary in summaries:
-            if '總結 (Overall Summary)' in summary and not final_summary["overall_summary"]:
-                final_summary["overall_summary"] = summary.split('觀點 (Viewpoints)')[0].strip()
-            if '觀點 (Viewpoints)' in summary and not final_summary["viewpoints"]:
-                content = summary.split('摘要 (Abstract)')[0].split('觀點 (Viewpoints)')[1].strip()
-                final_summary["viewpoints"] = content
-            if '摘要 (Abstract)' in summary and not final_summary["abstract"]:
-                content = summary.split('關鍵字 (Key Words)')[0].split('摘要 (Abstract)')[1].strip()
-                final_summary["abstract"] = content
-            if '關鍵字 (Key Words)' in summary and not final_summary["keywords"]:
-                content = summary.split('關鍵字 (Key Words)')[1].strip()
-                final_summary["keywords"] = content
-
-        output = "\n\n".join([
-            f" ⇣ \n\n{final_summary['overall_summary']}",
-            f" ✔︎ 觀點 (Viewpoints) \n{final_summary['viewpoints']}",
-            f" ✔︎ 摘要 (Abstract) \n{final_summary['abstract']}",
-            f" ✔︎ 關鍵字 (Key Words) 和 其他 \n{final_summary['keywords']}",
-            f" ⇡ \n",
-            f" ✡ 謝謝使用 Oli 小濃縮 (Summary) ✡ ",
-        ])
-        return output
+        return summary
     except Exception as e:
         print(f"Error: {e}")
         return "Unknown error! Please contact the owner. ok@vip.david888.com"
+
+# def summarize(text_array):
+#     def create_chunks(paragraphs):
+#         chunks = []
+#         chunk = ''
+#         for paragraph in paragraphs:
+#             if len(chunk) + len(paragraph) < chunk_size:
+#                 chunk += paragraph + ' '
+#             else:
+#                 chunks.append(chunk.strip())
+#                 chunk = paragraph + ' '
+#         if chunk:
+#             chunks.append(chunk.strip())
+#         return chunks
+
+#     try:
+#         text_chunks = create_chunks(text_array)
+#         text_chunks = [chunk for chunk in text_chunks if chunk]
+
+#         summaries = []
+#         system_messages = [
+#             {
+#                 "role": "system",
+#                 "content": (
+#                     "將以下原文總結為五個部分，並以純文字形式返回，不要包含任何 Markdown格式符號，以清晰的結構呈現，確保結果以 繁體中文 為主：\n"
+#                     "❶ 總結(Overall Summary)：撰寫約300字或更多，概括內容的主要議題與結論，語氣務實但易於理解。\n"
+#                     "❷ 觀點(Viewpoints)：列出原文中提到的3~7個主要觀點，並適當補充對這些觀點的評論或看法，條列呈現。\n"
+#                     "❸ 摘要(Abstract)：摘錄6到10個核心重點，簡潔有力，並適當搭配表情符號（如✅、⚠️、📌）凸顯關鍵信息。\n"
+#                     "❹ 關鍵字(Key Words)：列出數個最重要的關鍵字，避免冗長描述。\n"
+#                     "❺ 容易懂(Easy Know)：使用淺顯易懂的語言，將內容濃縮成一段約80~120字的解釋，適合十二歲孩子理解。\n"
+#                 )
+#             }
+#         ]
+#         #         system_messages = [
+#         #     {"role": "system", "content": "將以下原文總結為五個部分：1.總結 (Overall Summary)：約100字~300字概括。2.觀點 (Viewpoints):內容中的看法與你的看法。3.摘要 (Abstract)： 創建6到10個帶有適當表情符號的重點摘要。4.關鍵字 (Key Words)：列出內容中重點關鍵字。 5.容易懂(Easy Know)：一個讓十二歲青少年可以看得動懂的段落。確保生成的文字都是 繁體中文為主"}
+#         # ]
+
+#         with ThreadPoolExecutor() as executor:
+#             futures = [executor.submit(call_gpt_api, f"總結 the following text:\n{chunk}", system_messages) for chunk in text_chunks]
+#             summaries = [future.result() for future in tqdm(futures, total=len(text_chunks), desc="Summarizing")]
+
+#         final_summary = {
+#             "overall_summary": "",
+#             "viewpoints": "",
+#             "abstract": "",
+#             "keywords": ""
+#         }
+#         for summary in summaries:
+#             if '總結 (Overall Summary)' in summary and not final_summary["overall_summary"]:
+#                 final_summary["overall_summary"] = summary.split('觀點(Viewpoints)')[0].strip()
+#             if '觀點 (Viewpoints)' in summary and not final_summary["viewpoints"]:
+#                 content = summary.split('摘要 (Abstract)')[0].split('觀點 (Viewpoints)')[1].strip()
+#                 final_summary["viewpoints"] = content
+#             if '摘要 (Abstract)' in summary and not final_summary["abstract"]:
+#                 content = summary.split('關鍵字 (Key Words)')[0].split('摘要 (Abstract)')[1].strip()
+#                 final_summary["abstract"] = content
+#             if '關鍵字 (Key Words)' in summary and not final_summary["keywords"]:
+#                 content = summary.split('關鍵字 (Key Words)')[1].strip()
+#                 final_summary["keywords"] = content
+
+#         output = "\n\n".join([
+#             f" \n\n ✴️ {final_summary['overall_summary']}",
+#             f" ✅ 觀點(Viewpoints) \n{final_summary['viewpoints']}",
+#             f" ☑ 摘要(Abstract) \n{final_summary['abstract']}",
+#             f" ✔︎ 關鍵字(Key Words) \n{final_summary['keywords']}",
+#             f" \n",
+#             f" ✡ Oli 小濃縮 Summary bot 為您濃縮重點 ✡ ",
+#         ])
+#         return output
+#     except Exception as e:
+#         print(f"Error: {e}")
+#         return "Unknown error! Please contact the owner. ok@vip.david888.com"
 
 def clean_subtitle(subtitle_content):
     # 移除 WEBVTT 標頭
@@ -593,7 +628,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家機器人之一。版本20240921。我還活著。我會幫你自動總結為中文的內容。")
+                                                text="我是江家機器人之一。版本20250226。我還活著。我會幫你自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
             I can summarize text, URLs, PDFs and YouTube video for you. 
@@ -652,14 +687,14 @@ async def handle(action, update, context):
                         for part in parts:
                             await context.bot.send_message(
                                 chat_id=chat_id,
-                                text=part,
-                                parse_mode='MarkdownV2'
+                                text=part
+#                                parse_mode='MarkdownV2'
                             )
                     else:
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=summary_with_original_escaped,
-                            parse_mode='MarkdownV2'
+                            text=summary_with_original_escaped
+#                            parse_mode='MarkdownV2'
                         )
                 else:
                     await context.bot.send_message(
