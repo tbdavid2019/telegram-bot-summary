@@ -516,7 +516,7 @@ async def handle_yt2text(update, context):
     try:
         output_chunks = retrieve_yt_transcript_from_url(url)
 
-        if len(output_chunks) == 1 and (output_chunks[0] == "該影片沒有可用的字幕。" or output_chunks[0] == "無法獲取字幕，且音頻轉換功能未啟用。"):
+        if output_chunks and output_chunks[0] in ["該影片沒有可用的字幕。", "無法獲取字幕，且音頻轉換功能未啟用。"]:
             await context.bot.send_message(chat_id=chat_id, text=output_chunks[0])
             return
 
@@ -628,7 +628,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家機器人之一。版本20250226。我還活著。我會幫你自動總結為中文的內容。")
+                                                text="我是江家機器人之一。版本20250227。我還活著。我會幫你自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
             I can summarize text, URLs, PDFs and YouTube video for you. 
@@ -642,66 +642,62 @@ async def handle(action, update, context):
             You can also send me any text or URL to summarize.
             """
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text)
+        # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
             try:
                 user_input = update.message.text
                 text_array = process_user_input(user_input)
-
                 if text_array:
                     summary = summarize(text_array)
-                    
                     if is_url(user_input):
                         original_url = user_input
                         title = get_web_title(user_input)
                         summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
                     else:
-                        original_url = None  # 設置為 None，如果不是 URL
+                        original_url = None
                         summary_with_original = f"📌 \n{summary}\n"
-
-                    summary_with_original_escaped = escape_markdown(summary_with_original, version=2)
-
-                    # 新增：將摘要寄送到指定郵箱，使用 title 作為 email 標題
+                    
+                    # 移除這一行，不需要轉義普通文本
+                    # summary_with_original_escaped = escape_markdown(summary_with_original, version=2)
+                    
+                    # 新增：將摘要寄送到指定郵箱
                     send_summary_via_email(summary_with_original, "jeinggoway.cats@blogger.com", subject=title)
-
-
+                    
                     # 存儲摘要資訊到 MongoDB
                     summary_data = {
                         "telegram_id": user_id,
-                        "url": original_url,  # 可以是 None
+                        "url": original_url,
                         "summary": summary_with_original,
                         "timestamp": datetime.now()
                     }
                     summary_collection.insert_one(summary_data)
-
+                    
                     if show_processing and processing_message:
                         await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
- 
+                    
                     # 發送摘要到 Discord Webhook（如果啟用）
                     if enable_discord_webhook:
                         discord_message = f"🔔 新的摘要已生成：\n{summary_with_original}"
                         send_to_discord(discord_message)
-
-                    # 處理長消息
-                    if len(summary_with_original_escaped) > 4000:
-                        parts = [summary_with_original_escaped[i:i+4000] for i in range(0, len(summary_with_original_escaped), 4000)]
+                    
+                    # 處理長消息，直接使用原始文本，不進行轉義
+                    if len(summary_with_original) > 4000:
+                        parts = [summary_with_original[i:i+4000] for i in range(0, len(summary_with_original), 4000)]
                         for part in parts:
                             await context.bot.send_message(
                                 chat_id=chat_id,
                                 text=part
-#                                parse_mode='MarkdownV2'
                             )
                     else:
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=summary_with_original_escaped
-#                            parse_mode='MarkdownV2'
+                            text=summary_with_original
                         )
                 else:
                     await context.bot.send_message(
                         chat_id=chat_id,
                         text="無法處理輸入的文本。請確保提供了有效的文本或URL。"
                     )
-
             except Exception as e:
                 print(f"Error in summarize action: {e}")
                 await context.bot.send_message(
@@ -744,19 +740,23 @@ async def handle(action, update, context):
                 if processing_message:
                     await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
 
-
                 # 發送 PDF 摘要到 Discord Webhook（如果啟用）
                 if enable_discord_webhook:
                     discord_message = f"🔔 已成功處理一份 PDF 文件，摘要內容如下：\n{summary}"
                     send_to_discord(discord_message)
 
                 # 分批發送摘要
-                if len(escaped_summary) > 4000:
-                    parts = [escaped_summary[i:i+4000] for i in range(0, len(escaped_summary), 4000)]
+                if len(summary) > 4000:
+                    parts = [summary[i:i+4000] for i in range(0, len(summary), 4000)]
                     for part in parts:
-                        await context.bot.send_message(chat_id=chat_id, text=part, parse_mode='MarkdownV2')
+                        await context.bot.send_message(chat_id=chat_id, text=part)
                 else:
-                    await context.bot.send_message(chat_id=chat_id, text=escaped_summary, parse_mode='MarkdownV2')
+                    await context.bot.send_message(chat_id=chat_id, text=summary)                
+
+                if processing_message:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+
+  
 
             except Exception as e:
                 print(f"Error processing PDF: {e}")
