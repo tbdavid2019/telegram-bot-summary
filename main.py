@@ -29,7 +29,7 @@ smtp_port = int(os.environ.get("SMTP_PORT", 465))  # 預設使用 SSL
 smtp_user = os.environ.get("SMTP_USER", "your_email@gmail.com")
 smtp_password = os.environ.get("SMTP_PASSWORD", "your_password")
 smtp_cc_emails = os.environ.get("SMTP_CC_EMAILS", "").split(",")  # 多個 CC 收件人以逗號分隔
-enable_email = int(os.environ.get("ENABLE_EMAIL", 1))  # 控制是否啟用發送郵件功能，默認為 1（啟用）
+enable_email = int(os.environ.get("ENABLE_EMAIL", 0))  # 控制是否啟用發送郵件功能，默認為 0（啟用）
 # discord 設定
 discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
 enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默認為 0（不啟用）
@@ -150,7 +150,7 @@ def summarize(text_array):
             {
                 "role": "system",
                 "content": (
-                    "請將以下原文總結為五個部分，並以純文字形式返回，不要包含任何 Markdown 格式符號，以清晰的結構呈現，確保結果以繁體中文為主：\n"
+                    "請將以下原文總結為五個部分，並以純文字形式返回，不要 Markdown 格式符號，以清晰的結構呈現，確保結果以繁體中文為主：\n"
                     "❶ 總結(Overall Summary)：撰寫約300字或更多，概括內容的主要議題與結論，語氣務實且易於理解。\n"
                     "❷ 觀點(Viewpoints)：列出原文中提到的3~7個主要觀點，並適當補充對這些觀點的評論或看法，條列呈現。\n"
                     "❸ 摘要(Abstract)：摘錄6到10個核心重點，簡潔有力，並適當搭配表情符號（如✅、⚠️、📌）凸顯關鍵信息。\n"
@@ -655,13 +655,14 @@ async def handle(action, update, context):
                         summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
                     else:
                         original_url = None
+                        title = "短文之摘要"  
                         summary_with_original = f"📌 \n{summary}\n"
                     
                     # 移除這一行，不需要轉義普通文本
-                    # summary_with_original_escaped = escape_markdown(summary_with_original, version=2)
-                    
-                    # 新增：將摘要寄送到指定郵箱
-                    send_summary_via_email(summary_with_original, "jeinggoway.cats@blogger.com", subject=title)
+                    # 在使用時加入條件判斷
+                    if enable_email:
+                        # 新增：將摘要寄送到指定郵箱
+                        send_summary_via_email(summary_with_original, smtp_cc_emails, subject=title)
                     
                     # 存儲摘要資訊到 MongoDB
                     summary_data = {
