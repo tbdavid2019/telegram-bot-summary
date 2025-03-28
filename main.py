@@ -29,7 +29,7 @@ smtp_port = int(os.environ.get("SMTP_PORT", 465))  # 預設使用 SSL
 smtp_user = os.environ.get("SMTP_USER", "your_email@gmail.com")
 smtp_password = os.environ.get("SMTP_PASSWORD", "your_password")
 smtp_cc_emails = os.environ.get("SMTP_CC_EMAILS", "").split(",")  # 多個 CC 收件人以逗號分隔
-enable_email = int(os.environ.get("ENABLE_EMAIL", 0))  # 控制是否啟用發送郵件功能，默認為 0（啟用）
+enable_email = int(os.environ.get("ENABLE_EMAIL", 0))  # 控制是否啟用發送郵件功能，默認為 0（禁用）
 # discord 設定
 discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
 enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默認為 0（不啟用）
@@ -63,11 +63,23 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
         return  # 如果禁用郵件功能，直接返回
     
     try:
+        # 檢查必要的郵件設定
+        if not smtp_server or not smtp_user or not smtp_password:
+            print("郵件設定不完整，無法發送郵件")
+            return
+            
         # 設定郵件主體
         message = MIMEMultipart()
         message["From"] = smtp_user
         message["To"] = recipient_email
-        message["CC"] = ", ".join(smtp_cc_emails)
+        
+        # 只有在有抄送收件人時才添加 CC 欄位
+        if smtp_cc_emails and any(smtp_cc_emails):
+            message["CC"] = ", ".join(smtp_cc_emails)
+            all_recipients = [recipient_email] + smtp_cc_emails
+        else:
+            all_recipients = [recipient_email]
+            
         message["Subject"] = subject
 
         # 添加郵件正文
@@ -78,10 +90,10 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
             server.login(smtp_user, smtp_password)
             server.sendmail(
                 smtp_user,
-                [recipient_email] + smtp_cc_emails,
+                all_recipients,
                 message.as_string(),
             )
-        print("Email sent successfully.")
+        print(f"Email sent successfully to {recipient_email} and CC: {smtp_cc_emails if smtp_cc_emails else 'none'}")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
@@ -662,7 +674,11 @@ async def handle(action, update, context):
                     # 在使用時加入條件判斷
                     if enable_email:
                         # 新增：將摘要寄送到指定郵箱
-                        send_summary_via_email(summary_with_original, smtp_cc_emails, subject=title)
+                        # 注意：需要一個主要收件人，而不僅是抄送列表
+                        if smtp_user:  # 使用發件人地址作為主要收件人
+                            send_summary_via_email(summary_with_original, smtp_user, subject=title)
+                        else:
+                            print("無法發送郵件：缺少主要收件人地址")
                     
                     # 存儲摘要資訊到 MongoDB
                     summary_data = {
