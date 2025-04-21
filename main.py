@@ -670,22 +670,57 @@ async def handle(action, update, context):
                     text="處理您的請求時發生錯誤，請稍後再試。"
                 )
         elif action == 'file':
+            import traceback
             try:
-                file = await update.message.document.get_file()
-                filename = update.message.document.file_name
-                ext = os.path.splitext(filename)[1] if filename else ""
+                print("=== [DEBUG] handle_file 進入 ===")
+                print(f"update.message.document: {update.message.document}")
+                print(f"update.message.photo: {update.message.photo}")
+                if update.message.document:
+                    file = await update.message.document.get_file()
+                    filename = update.message.document.file_name
+                    ext = os.path.splitext(filename)[1] if filename else ""
+                    print(f"[DEBUG] 文件模式 filename={filename}, ext={ext}")
+                elif update.message.photo:
+                    # 取最大解析度的圖片
+                    photo = update.message.photo[-1]
+                    file = await photo.get_file()
+                    filename = "photo.jpg"
+                    ext = ".jpg"
+                    print(f"[DEBUG] 圖片模式 filename={filename}, ext={ext}")
+                else:
+                    print("[DEBUG] 無法取得檔案或圖片")
+                    raise Exception("無法取得檔案或圖片")
                 file_path = f"/tmp/{file.file_id}{ext}"
+                print(f"[DEBUG] file_path={file_path}")
                 await file.download_to_drive(file_path)
+                print(f"[DEBUG] 檔案已下載到 {file_path}")
                 
                 # 判斷是否為圖片檔案
                 image_exts = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
                 if ext.lower() in image_exts:
-                    client = OpenAI(api_key=openai_api_key)
+                    print("[DEBUG] 進入圖片摘要模式，自動選擇 llm_client")
+                    if not base_url or "openai.com" in base_url:
+                        from openai import OpenAI
+                        client = OpenAI()
+                        print("[DEBUG] 使用 openai.OpenAI() client")
+                    else:
+                        from litellm import openai as litellm_openai
+                        client = litellm_openai.OpenAI(api_key=openai_api_key, base_url=base_url)
+                        print(f"[DEBUG] 使用 litellm.openai.OpenAI client, base_url={base_url}")
                     md = MarkItDown(llm_client=client, llm_model=model)
                 else:
+                    print("[DEBUG] 進入文件摘要模式")
                     md = MarkItDown()
-                result = md.convert(file_path)
-                text = result.text_content
+                print("[DEBUG] 開始 markitdown 轉換")
+                try:
+                    result = md.convert(file_path)
+                    text = result.text_content
+                    print(f"[DEBUG] markitdown 轉換完成，text 長度={len(text)}")
+                except Exception as e:
+                    import traceback
+                    print(f"[ERROR] markitdown 轉換失敗: {e}")
+                    traceback.print_exc()
+                    raise
                 # 可選：處理進度訊息，這裡簡化為一則
                 progress = "正在處理檔案..."
                 if processing_message:
@@ -694,21 +729,28 @@ async def handle(action, update, context):
                     processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
 
                 os.remove(file_path)
+                print(f"[DEBUG] 已刪除暫存檔 {file_path}")
 
                 # 分批處理文本，避免一次性處理過多內容
                 chunk_size = 5000  # 每次處理 5000 字符
                 text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+                print(f"[DEBUG] 分 chunk 完成，共 {len(text_chunks)} 段")
                 summary = ""
 
-                for chunk in text_chunks:
+                for i, chunk in enumerate(text_chunks):
+                    print(f"[DEBUG] 開始摘要 chunk {i+1}/{len(text_chunks)}")
                     chunk_summary = summarize([chunk])
                     summary += chunk_summary + "\n\n"
 
                 # 轉義 Markdown 特殊字符
                 escaped_summary = escape_markdown(summary, version=2)
+                print("[DEBUG] 摘要完成，準備發送")
 
                 if processing_message:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                    try:
+                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                    except Exception as e:
+                        print(f"[DEBUG] 刪除 processing_message 失敗: {e}")
 
                 # 發送 PDF 摘要到 Discord Webhook（如果啟用）
                 if enable_discord_webhook:
@@ -721,15 +763,18 @@ async def handle(action, update, context):
                     for part in parts:
                         await context.bot.send_message(chat_id=chat_id, text=part)
                 else:
-                    await context.bot.send_message(chat_id=chat_id, text=summary)                
+                    await context.bot.send_message(chat_id=chat_id, text=summary)
 
                 if processing_message:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-
-  
+                    try:
+                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                    except Exception as e:
+                        print(f"[DEBUG] 刪除 processing_message 失敗: {e}")
 
             except Exception as e:
-                print(f"Error processing PDF: {e}")
+                print(f"[ERROR] Error processing file: {e}")
+                traceback.print_exc()
+                await context.bot.send_message(chat_id=chat_id, text=f"處理檔案時發生錯誤：{str(e)}，請稍後再試。")
                 await context.bot.send_message(chat_id=chat_id, text=f"處理 PDF 時發生錯誤：{str(e)}，請稍後再試。")
 
     except Exception as e:
@@ -748,9 +793,11 @@ def main():
         yt2text_handler = CommandHandler('yt2text', handle_yt2text)
         set_my_commands(telegram_token)
         summarize_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize)
-        file_handler = MessageHandler(filters.Document.PDF, handle_file)
+        file_handler = MessageHandler(filters.Document.ALL, handle_file)
+        file_image_handler = MessageHandler(filters.PHOTO, handle_file)
         button_click_handler = CallbackQueryHandler(handle_button_click)
         application.add_handler(file_handler)
+        application.add_handler(file_image_handler)
         application.add_handler(start_handler)
         application.add_handler(help_handler)
         application.add_handler(yt2audio_handler)

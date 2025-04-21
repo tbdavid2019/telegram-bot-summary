@@ -5,6 +5,7 @@ asyncio==3.4.3
 tqdm==4.66.4
 
 openai
+litellm
 
 # text extraction
 trafilatura==1.9.0 
