@@ -7,8 +7,9 @@ import re
 import trafilatura
 import uuid
 import requests
+from openai import OpenAI
 from duckduckgo_search import AsyncDDGS
-from PyPDF2 import PdfReader
+from markitdown import MarkItDown
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -671,21 +672,26 @@ async def handle(action, update, context):
         elif action == 'file':
             try:
                 file = await update.message.document.get_file()
-                file_path = f"/tmp/{file.file_id}.pdf"
+                filename = update.message.document.file_name
+                ext = os.path.splitext(filename)[1] if filename else ""
+                file_path = f"/tmp/{file.file_id}{ext}"
                 await file.download_to_drive(file_path)
                 
-                reader = PdfReader(file_path)
-                text = ""
-                total_pages = len(reader.pages)
-                
-                for i, page in enumerate(reader.pages):
-                    text += page.extract_text() + "\n"
-                    if i % 10 == 0:  # 每處理 10 頁更新一次進度
-                        progress = f"正在處理 PDF：{i+1}/{total_pages} 頁"
-                        if processing_message:
-                            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
-                        else:
-                            processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
+                # 判斷是否為圖片檔案
+                image_exts = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
+                if ext.lower() in image_exts:
+                    client = OpenAI(api_key=openai_api_key)
+                    md = MarkItDown(llm_client=client, llm_model=model)
+                else:
+                    md = MarkItDown()
+                result = md.convert(file_path)
+                text = result.text_content
+                # 可選：處理進度訊息，這裡簡化為一則
+                progress = "正在處理檔案..."
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
+                else:
+                    processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
 
                 os.remove(file_path)
 

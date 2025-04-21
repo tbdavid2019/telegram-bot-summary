@@ -4,8 +4,7 @@ asyncio==3.4.3
 # progress tracking
 tqdm==4.66.4
 
-# llm adapter
-litellm==1.37.9
+openai
 
 # text extraction
 trafilatura==1.9.0 
@@ -14,7 +13,7 @@ trafilatura==1.9.0
 duckduckgo_search==5.3.0b4
 
 # PDFs
-PyPDF2==3.0.1
+markitdown[all]
 
 # Telegram
 python-telegram-bot==21.1.1
@@ -28,7 +27,7 @@ yt-dlp
 # pydub for audio processing
 pydub==0.25.1
 
-beautifulsoup4==4.12.3
-lxml==4.9.4
+beautifulsoup4
+lxml
 pymongo
 webvtt-py
