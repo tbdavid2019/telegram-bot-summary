@@ -731,16 +731,10 @@ async def handle(action, update, context):
                 os.remove(file_path)
                 print(f"[DEBUG] 已刪除暫存檔 {file_path}")
 
-                # 分批處理文本，避免一次性處理過多內容
-                chunk_size = 5000  # 每次處理 5000 字符
-                text_chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-                print(f"[DEBUG] 分 chunk 完成，共 {len(text_chunks)} 段")
-                summary = ""
-
-                for i, chunk in enumerate(text_chunks):
-                    print(f"[DEBUG] 開始摘要 chunk {i+1}/{len(text_chunks)}")
-                    chunk_summary = summarize([chunk])
-                    summary += chunk_summary + "\n\n"
+                # 直接對整個文本進行一次性摘要，不需要分塊處理
+                # 因為 LLM 可以處理高達 1,000,000 個 token
+                print(f"[DEBUG] 開始對整個文本進行摘要，文本長度: {len(text)} 字符")
+                summary = summarize([text])
 
                 # 轉義 Markdown 特殊字符
                 escaped_summary = escape_markdown(summary, version=2)
