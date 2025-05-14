@@ -169,7 +169,7 @@ def summarize(text_array):
                     "⓶ 【總結 Overall Summary】：撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
                     "⓷ 【觀點 Viewpoints】：列出影片中提到的**3～7個主要觀點**，每點以條列方式呈現，並可加入簡短評論或補充說明。\n\n"
                     "⓸ 【摘要 Abstract】：列出**6～10個關鍵重點句**，每點簡短有力，前綴搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
-                    "⓹ 【關鍵字 Key Words】：整理出影片中的**核心關鍵字或詞組（約5～10個）**，避免使用完整句子或冗長敘述。\n\n"
+                    "⓹ 【FAQ 測驗】：根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
                 )
             }
         ]
@@ -588,7 +588,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家機器人之一。版本20250415。我還活著。我會幫你自動總結為中文的內容。")
+                                                text="我是江家機器人Oli。v20250514。可以幫您自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
             I can summarize text, URLs, PDFs and YouTube video for you. 
