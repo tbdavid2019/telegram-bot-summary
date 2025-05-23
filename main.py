@@ -497,10 +497,33 @@ async def handle_yt2text(update, context):
         print(f"Error: {e}")
         await context.bot.send_message(chat_id=chat_id, text="下載或轉換文本失敗。請檢查輸入的 YouTube URL 是否正確。")
 
+def get_youtube_title(youtube_url):
+    """
+    使用 yt-dlp 提取 YouTube 影片標題
+    """
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': './cookies.txt',
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            return info.get('title', 'YouTube 影片')
+    except Exception as e:
+        print(f"Error extracting YouTube title: {e}")
+        return "YouTube 影片"
+
 def get_web_title(user_input):
     """
     根據用戶提供的 URL，抓取網頁內容並提取標題。
     """
+    # 檢查是否為 YouTube URL
+    youtube_pattern = re.compile(r"https?://(www\.|m\.)?(youtube\.com|youtu\.be)/")
+    if youtube_pattern.match(user_input):
+        return get_youtube_title(user_input)
+    
     try:
         # 使用 trafilatura 抓取網頁內容
         downloaded = trafilatura.fetch_url(user_input)
