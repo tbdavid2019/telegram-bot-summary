@@ -228,6 +228,7 @@ def extract_youtube_transcript(youtube_url):
         'skip_download': True,
         'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
         'outtmpl': '/tmp/%(id)s.%(ext)s',
+        'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
     }
 
     try:
@@ -312,7 +313,7 @@ def audio_transcription(youtube_url):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookies_from_browser': 'chrome'  # 添加這一行來指定 cookies 文件
+            'cookiefile': './cookies.txt',  # 使用 cookies.txt 檔案
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -443,6 +444,7 @@ async def handle_yt2audio(update, context):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
+            'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
