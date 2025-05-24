@@ -40,6 +40,7 @@ enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默�
 def send_to_discord(content):
     """
     發送訊息到 Discord Webhook
+    如果內容過長，會自動上傳為 txt 文件
     """
     if not enable_discord_webhook:
         print("Discord Webhook is disabled by configuration.")
@@ -50,12 +51,43 @@ def send_to_discord(content):
         return
     
     try:
-        data = {"content": content}
-        response = requests.post(discord_webhook_url, json=data)
-        response.raise_for_status()
-        print("Message sent to Discord successfully.")
+        # Discord 訊息長度限制為 2000 字符
+        max_length = 1900  # 留一些緩衝空間
+        
+        if len(content) <= max_length:
+            # 內容不長，直接發送文字訊息
+            data = {"content": content}
+            response = requests.post(discord_webhook_url, json=data)
+            response.raise_for_status()
+            print("Message sent to Discord successfully.")
+        else:
+            # 內容過長，上傳為 txt 文件
+            temp_file_path = f"/tmp/discord_summary_{uuid.uuid4()}.txt"
+            
+            # 創建 txt 文件
+            with open(temp_file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # 準備上傳文件的數據
+            with open(temp_file_path, 'rb') as f:
+                files = {
+                    'file': ('summary.txt', f, 'text/plain')
+                }
+                data = {
+                    'content': '📄 摘要內容過長，已上傳為文件'
+                }
+                
+                response = requests.post(discord_webhook_url, data=data, files=files)
+                response.raise_for_status()
+            
+            # 刪除臨時文件
+            os.remove(temp_file_path)
+            print("File sent to Discord successfully.")
+            
     except requests.exceptions.RequestException as e:
         print(f"Failed to send message to Discord: {e}")
+    except Exception as e:
+        print(f"Error in send_to_discord: {e}")
 
 
 def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
