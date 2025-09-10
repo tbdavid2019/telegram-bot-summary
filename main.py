@@ -238,6 +238,78 @@ def summarize(text_array):
 
 
 
+def is_supported_by_ytdlp(url):
+    """
+    檢測 URL 是否被 yt-dlp 支援的影片網站
+    使用雙重檢測：URL 模式 + yt-dlp 檢測，避免將一般網站誤判為影片網站
+    """
+    # 第一層：URL 模式檢測已知的影片網站
+    video_site_patterns = [
+        r'youtube\.com|youtu\.be',
+        r'vimeo\.com',
+        r'bilibili\.com',
+        r'dailymotion\.com',
+        r'tiktok\.com',
+        r'twitch\.tv',
+        r'facebook\.com/watch|fb\.watch',
+        r'instagram\.com/(p|reel|tv)',
+        r'twitter\.com/.*/status|x\.com/.*/status',
+        r'soundcloud\.com',
+        r'spotify\.com',
+        r'bandcamp\.com',
+        r'ted\.com/talks',
+        r'coursera\.org',
+        r'khanacademy\.org',
+        r'archive\.org'
+    ]
+    
+    # 如果 URL 不匹配任何已知的影片網站模式，直接返回 False
+    url_lower = url.lower()
+    if not any(re.search(pattern, url_lower) for pattern in video_site_patterns):
+        print(f"URL {url} doesn't match known video site patterns")
+        return False
+    
+    # 第二層：使用 yt-dlp 進行詳細檢測
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': './cookies.txt',
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 嘗試提取資訊而不下載
+            info = ydl.extract_info(url, download=False)
+            if info:
+                # 檢查是否包含影片相關的欄位
+                video_indicators = [
+                    'formats',           # 影片格式列表
+                    'duration',          # 影片長度
+                    'view_count',        # 觀看次數
+                    'like_count',        # 按讚數
+                    'upload_date',       # 上傳日期
+                    'uploader',          # 上傳者
+                ]
+                
+                # 如果有 formats 欄位且不為空，很可能是影片
+                if 'formats' in info and info['formats']:
+                    return True
+                
+                # 如果有 duration 且大於 0，很可能是影片
+                if 'duration' in info and info.get('duration', 0) > 0:
+                    return True
+                
+                # 檢查是否有其他影片相關欄位
+                if any(key in info for key in video_indicators):
+                    return True
+                
+                return False
+    except Exception as e:
+        print(f"URL {url} not supported by yt-dlp: {e}")
+        return False
+    
+    return False
+
 def clean_subtitle(subtitle_content):
     # 移除 WEBVTT 標頭
     subtitle_content = re.sub(r'WEBVTT\n\n', '', subtitle_content)
@@ -253,7 +325,10 @@ def clean_subtitle(subtitle_content):
     
     return subtitle_content.strip()
 
-def extract_youtube_transcript(youtube_url):
+def extract_video_transcript(video_url):
+    """
+    通用的影片字幕提取函數，支援所有 yt-dlp 支援的網站
+    """
     ydl_opts = {
         'writesubtitles': True,
         'writeautomaticsub': True,
@@ -265,11 +340,11 @@ def extract_youtube_transcript(youtube_url):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
+            info = ydl.extract_info(video_url, download=False)
             video_id = info['id']
             
             if 'subtitles' in info or 'automatic_captions' in info:
-                ydl.download([youtube_url])
+                ydl.download([video_url])
                 
                 subtitle_content = None
                 for lang in ['en','zh-Hant', 'zh-Hans', 'zh']:
@@ -298,13 +373,16 @@ def extract_youtube_transcript(youtube_url):
 
 
 
-def retrieve_yt_transcript_from_url(youtube_url):
+def retrieve_video_transcript_from_url(video_url):
+    """
+    通用的影片字幕轉文字函數，支援所有 yt-dlp 支援的網站
+    """
     try:
-        subtitle_content = extract_youtube_transcript(youtube_url)
+        subtitle_content = extract_video_transcript(video_url)
         if subtitle_content == "no transcript":
             if use_audio_fallback:
                 print("No usable subtitles found. Falling back to audio transcription.")
-                return audio_transcription(youtube_url)
+                return audio_transcription(video_url)
             else:
                 return ["該影片沒有可用的字幕，且音頻轉換功能未啟用。"]
 
@@ -329,10 +407,10 @@ def retrieve_yt_transcript_from_url(youtube_url):
         return output_chunks
 
     except Exception as e:
-        print(f"Error in retrieve_yt_transcript_from_url: {e}")
+        print(f"Error in retrieve_video_transcript_from_url: {e}")
         return ["無法獲取字幕或進行音頻轉換。"]
     
-def audio_transcription(youtube_url):
+def audio_transcription(video_url):
     try:
         # 使用 yt-dlp 下載音頻
         ydl_opts = {
@@ -349,7 +427,7 @@ def audio_transcription(youtube_url):
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=True)
+            info = ydl.extract_info(video_url, download=True)
             output_path = ydl.prepare_filename(info)
 
         output_path = output_path.replace(os.path.splitext(output_path)[1], ".mp3")
@@ -455,10 +533,10 @@ async def handle_yt2audio(update, context):
     user_input = update.message.text.split()
 
     if len(user_input) < 2:  # 檢查是否有提供 URL
-        await context.bot.send_message(chat_id=chat_id, text="請提供一個 YouTube 影片的 URL。例如：/yt2audio Youtube的URL")
+        await context.bot.send_message(chat_id=chat_id, text="請提供一個影片的 URL。例如：/yt2audio 影片URL")
         return
 
-    url = user_input[1]  # 取得 YouTube URL
+    url = user_input[1]  # 取得影片 URL
 
     try:
         # 生成唯一文件名稱
@@ -493,7 +571,7 @@ async def handle_yt2audio(update, context):
 
     except Exception as e:
         print(f"Error: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="下載或傳送音頻失敗。請檢查輸入的 YouTube URL 是否正確。")
+        await context.bot.send_message(chat_id=chat_id, text="下載或傳送音頻失敗。請檢查輸入的影片 URL 是否正確。")
         
 
 
@@ -502,13 +580,13 @@ async def handle_yt2text(update, context):
     user_input = update.message.text.split()
 
     if len(user_input) < 2:
-        await context.bot.send_message(chat_id=chat_id, text="請提供一個 YouTube 影片的 URL。例如：/yt2text Youtube的URL")
+        await context.bot.send_message(chat_id=chat_id, text="請提供一個影片的 URL。例如：/yt2text 影片URL")
         return
 
     url = user_input[1]
 
     try:
-        output_chunks = retrieve_yt_transcript_from_url(url)
+        output_chunks = retrieve_video_transcript_from_url(url)
 
         if output_chunks and output_chunks[0] in ["該影片沒有可用的字幕。", "無法獲取字幕，且音頻轉換功能未啟用。"]:
             await context.bot.send_message(chat_id=chat_id, text=output_chunks[0])
@@ -527,11 +605,11 @@ async def handle_yt2text(update, context):
 
     except Exception as e:
         print(f"Error: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="下載或轉換文本失敗。請檢查輸入的 YouTube URL 是否正確。")
+        await context.bot.send_message(chat_id=chat_id, text="下載或轉換文本失敗。請檢查輸入的影片 URL 是否正確。")
 
-def get_youtube_title(youtube_url):
+def get_video_title(video_url):
     """
-    使用 yt-dlp 提取 YouTube 影片標題
+    使用 yt-dlp 提取影片標題，支援所有 yt-dlp 支援的網站
     """
     try:
         ydl_opts = {
@@ -541,20 +619,20 @@ def get_youtube_title(youtube_url):
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
-            return info.get('title', 'YouTube 影片')
+            info = ydl.extract_info(video_url, download=False)
+            return info.get('title', '影片')
     except Exception as e:
-        print(f"Error extracting YouTube title: {e}")
-        return "YouTube 影片"
+        print(f"Error extracting video title: {e}")
+        return "影片"
 
 def get_web_title(user_input):
     """
     根據用戶提供的 URL，抓取網頁內容並提取標題。
+    支援所有 yt-dlp 支援的影片網站以及一般網頁
     """
-    # 檢查是否為 YouTube URL
-    youtube_pattern = re.compile(r"https?://(www\.|m\.)?(youtube\.com|youtu\.be)/")
-    if youtube_pattern.match(user_input):
-        return get_youtube_title(user_input)
+    # 首先檢查是否為 yt-dlp 支援的影片網站
+    if is_supported_by_ytdlp(user_input):
+        return get_video_title(user_input)
     
     try:
         # 使用 trafilatura 抓取網頁內容
@@ -577,18 +655,18 @@ def process_user_input(user_input):
     """
     處理用戶輸入的文字或網址，並返回適當的文本內容數組
     """
-    youtube_pattern = re.compile(r"https?://(www\.|m\.)?(youtube\.com|youtu\.be)/")
     url_pattern = re.compile(r"https?://")
 
-    if youtube_pattern.match(user_input):
-        # 如果是 YouTube 的網址，調用 YouTube 字幕處理函數
-        text_array = retrieve_yt_transcript_from_url(user_input)
-    elif url_pattern.match(user_input):
-        # 如果是一般的 URL，調用網頁抓取函數
-        text_array, error = scrape_text_from_url(user_input)
-        if error:
-            return [], error
-            
+    if url_pattern.match(user_input):
+        # 檢查是否為 yt-dlp 支援的影片網站
+        if is_supported_by_ytdlp(user_input):
+            # 如果是影片網址，調用通用字幕處理函數
+            text_array = retrieve_video_transcript_from_url(user_input)
+        else:
+            # 如果是一般的 URL，調用網頁抓取函數
+            text_array, error = scrape_text_from_url(user_input)
+            if error:
+                return [], error
     else:
         # 處理一般的文字輸入
         text_array = split_user_input(user_input)
@@ -615,8 +693,8 @@ def set_my_commands(telegram_token):
     commands = [
         {"command": "start", "description": "確認機器人是否在線"},
         {"command": "help", "description": "顯示此幫助訊息"},
-        {"command": "yt2audio", "description": "下載 YouTube 音頻"},
-        {"command": "yt2text", "description": "將 YouTube 影片轉成文字"},
+        {"command": "yt2audio", "description": "下載影片音頻（支援 YouTube、Vimeo、Bilibili 等）"},
+        {"command": "yt2text", "description": "將影片轉成文字（支援 YouTube、Vimeo、Bilibili 等）"},
     ]
     data = {"commands": commands}
     response = requests.post(url, json=data)
@@ -648,13 +726,14 @@ async def handle(action, update, context):
                                                 text="我是江家機器人Oli。v20250514。可以幫您自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
-            I can summarize text, URLs, PDFs and YouTube video for you. 
+            I can summarize text, URLs, PDFs and video content for you. 
             請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為繁體中文的內容。
+            支援影片網站：YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch 等 1000+ 網站
             Here are the available commands:
             /start - Start the bot
             /help - Show this help message
-            /yt2audio <YouTube URL> - Download YouTube audio
-            /yt2text <YouTube URL> - Convert YouTube video to text
+            /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
+            /yt2text <Video URL> - Convert video to text (支援 YouTube、Vimeo、Bilibili 等)
             
             You can also send me any text or URL to summarize.
             """

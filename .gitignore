@@ -2,3 +2,4 @@ rebuild.sh
 main_production.py
 .env
 cookies.txt
+公開版本env.txt
