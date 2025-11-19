@@ -1,7 +1,84 @@
 
 # Summary GPT Bot
 
-An AI-powered text summarization Telegram bot that generates concise summaries of text, URLs, PDFs, and videos from 1000+ supported websites.
+An AI-powered text summarization Telegram bot that generates concise summaries of text, URLs, PDFs, videos from 1000+ supported websites, and podcasts.
+
+---
+
+## 📅 最新更新 (2025-11-19)
+
+### ✨ 新功能
+
+#### 1. 多語言支援 🌍
+- 支援繁體中文和英文兩種語言輸出
+- 使用 `/lang` 命令隨時切換語言
+- 語言設定自動保存,後續摘要使用選定語言
+
+#### 2. LLM 續問功能 💬
+- 完成摘要後可針對內容提問
+- 自動保留原始內容和摘要,支援多輪對話
+- 智能識別續問 vs 新摘要請求
+- 使用 `/context` 查看對話狀態
+- 使用 `/clear` 清除歷史開始新對話
+
+#### 3. Podcast 平台支援 🎙️
+- **Pocket Casts** - 支援 podcast 摘要
+- **SoundOn** - 支援台灣本地 podcast 平台
+- **Apple Podcast** - 通過 iTunes API 獲取 RSS feed
+
+---
+
+## 💡 使用體驗流程
+
+### 場景 1: 影片摘要 + 續問
+```
+👤 用戶: https://youtube.com/watch?v=xxx
+🤖 Bot: [生成摘要，包含五個部分：容易懂、總結、觀點、摘要、FAQ]
+
+👤 用戶: 影片中提到的第三個重點是什麼？
+🤖 Bot: 💬 續問回答: [基於原內容回答具體問題]
+
+👤 用戶: 那第一個和第三個有什麼關聯？
+🤖 Bot: 💬 續問回答: [分析兩者關聯]
+
+👤 用戶: /clear
+🤖 Bot: ✅ 對話歷史已清除
+```
+
+### 場景 2: 切換語言
+```
+👤 用戶: /lang
+🤖 Bot: [顯示當前語言與語言選擇按鈕]
+       Current language: 繁體中文
+       🇹🇼 繁體中文  🇬🇧 English
+
+👤 用戶: [點擊 English]
+🤖 Bot: ✅ Language switched to: English
+
+👤 用戶: https://ted.com/talks/xxx
+🤖 Bot: [以英文輸出摘要]
+```
+
+### 場景 3: Podcast 摘要
+```
+👤 用戶: https://pocketcasts.com/podcast/xxx
+🤖 Bot: [自動識別為 podcast]
+       [提取 RSS feed → 獲取最新 episode]
+       [下載音頻 → Whisper 轉錄 → 生成摘要]
+
+👤 用戶: 這集主要在討論什麼？
+🤖 Bot: 💬 續問回答: [基於 podcast 內容回答]
+```
+
+### 場景 4: 查看對話狀態
+```
+👤 用戶: /context
+🤖 Bot: 📋 當前對話上下文:
+       🔗 來源: https://youtube.com/watch?v=xxx
+       📅 時間: 2025-11-19 10:30:00
+       💬 問答輪數: 3
+       📝 內容長度: 45 paragraphs
+```
 
 ---
 
@@ -87,6 +164,26 @@ Telegram bot 可濃縮文字、URL、PDF 和 YouTube 影片的重點摘要。
 ## Usage 使用方法
 
 以下為包含英文與繁體中文的設置指導。
+
+### 📱 機器人命令
+
+| 命令 | 說明 |
+|------|------|
+| /start | 確認機器人是否在線 |
+| /help | 顯示幫助訊息 |
+| /lang | 切換語言 (繁體中文 ⇄ English) |
+| /context | 顯示當前對話上下文 |
+| /clear | 清除對話歷史 |
+| /yt2audio <URL> | 下載影片音頻 |
+| /yt2text <URL> | 將影片轉成文字 |
+
+### 💡 使用技巧
+
+1. **直接發送內容**: 文字、URL、PDF 都可以直接發送，無需命令
+2. **續問功能**: 完成摘要後，直接發送問題即可續問
+3. **語言切換**: 使用 `/lang` 切換語言後，之後的摘要都使用新語言
+4. **多輪對話**: 系統自動保留最近 3 輪對話，支援深入討論
+5. **新對話**: 發送新 URL 或 `/clear` 開始新的摘要
 
 ### Docker 設置指南
 

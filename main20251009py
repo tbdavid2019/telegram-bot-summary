@@ -19,7 +19,6 @@ from telegram.helpers import escape_markdown
 from pymongo import MongoClient
 from datetime import datetime
 from webvtt import WebVTT
-import feedparser
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -152,31 +151,6 @@ summary_collection = db["summaries"]
 # 從環境變量中獲取設置，預設為 1（開啟）
 show_processing = int(os.environ.get("SHOW_PROCESSING", "1"))
 
-# 語言配置
-SUPPORTED_LANGUAGES = {
-    'zh-TW': '繁體中文',
-    'en': 'English'
-}
-
-# 繁體中文 System Prompt
-SYSTEM_PROMPT_ZH = (
-    "請將以下原始影片內容總結為五個部分，**僅以純文字格式輸出，不使用 Markdown 語法或符號**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔\n\n"
-    "⓵ 【容易懂 Easy Know】：使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
-    "⓶ 【總結 Overall Summary】：撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
-    "⓷ 【觀點 Viewpoints】：列出影片中提到的**3～7個主要觀點**，每點以條列方式呈現，並可加入簡短評論或補充說明。\n\n"
-    "⓸ 【摘要 Abstract】：列出**6～10個關鍵重點句**，每點簡短有力，前綴搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
-    "⓹ 【FAQ 測驗】：根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
-)
-
-# 英文 System Prompt
-SYSTEM_PROMPT_EN = (
-    "Please summarize the following content into five sections in **plain text format only, without using Markdown syntax or symbols**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
-    "⓵ 【Easy Know】: Use simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
-    "⓶ 【Overall Summary】: Write a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
-    "⓷ 【Viewpoints】: List **3-7 main viewpoints** mentioned in the content. Present each point in bullet form, and add brief comments or supplementary explanations.\n\n"
-    "⓸ 【Abstract】: List **6-10 key highlight sentences**. Each point should be brief and powerful, prefixed with appropriate emoji symbols (such as ✅, ⚠️, 📌) to emphasize key information.\n\n"
-    "⓹ 【FAQ Quiz】: Generate **three multiple-choice questions** based on the content. Each question should have A, B, C, D options, followed by the correct answer and a brief explanation. Questions should cover important concepts or key knowledge points from the content.\n\n"
-)
 
 
 def split_user_input(text):
@@ -211,23 +185,42 @@ async def search_results(keywords):
     return results
 
 
-def summarize(text_array, language='zh-TW'):
+def summarize(text_array):
     try:
         # 將所有段落合併成一個完整的文本
         full_text = "\n".join(text_array)
         
-        # 根據語言選擇對應的 system prompt
-        if language == 'en':
-            system_content = SYSTEM_PROMPT_EN
-        else:
-            system_content = SYSTEM_PROMPT_ZH
-        
+        # 定義系統訊息，要求返回純文字且不含 Markdown 格式符號
+
         system_messages = [
             {
                 "role": "system",
-                "content": system_content
+                "content": (
+                    "請將以下原始影片內容總結為五個部分，**僅以純文字格式輸出，不使用 Markdown 語法或符號**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔\n\n"
+                    "⓵ 【容易懂 Easy Know】：使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
+                    "⓶ 【總結 Overall Summary】：撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
+                    "⓷ 【觀點 Viewpoints】：列出影片中提到的**3～7個主要觀點**，每點以條列方式呈現，並可加入簡短評論或補充說明。\n\n"
+                    "⓸ 【摘要 Abstract】：列出**6～10個關鍵重點句**，每點簡短有力，前綴搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
+                    "⓹ 【FAQ 測驗】：根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
+                )
             }
         ]
+
+        
+        # system_messages = [
+        #     {
+        #         "role": "system",
+        #         "content": (
+        #             "請將以下原文總結為五個部分，並以純文字形式輸出，注意不要Markdown格式，以清晰的結構呈現，確保結果以繁體中文為主：\n"
+        #             "⓵ 容易懂 (Easy Know)：使用淺顯易懂的語言，將內容濃縮成一段約120~200字的解釋，適合十二歲孩子理解。\n"
+        #             "⓶ 總結 (Overall Summary)：撰寫約300字或更多，概括內容的主要議題與結論，語氣務實且易於理解。\n"
+        #             "⓷ 觀點 (Viewpoints)：列出原文中提到的3~7個主要觀點，並適當補充對這些觀點的評論或看法，條列呈現。\n"
+        #             "⓸ 摘要 (Abstract)：摘錄6到10個核心重點，簡潔有力，並適當搭配表情符號（如✅、⚠️、📌）凸顯關鍵信息。\n"
+        #             "⓹ 關鍵字 (Key Words)：列出數個最重要的關鍵字，避免冗長描述。\n"
+
+        #         )
+        #     }
+        # ]
         
         # 建構 prompt，直接附上整個文本
         prompt = "總結 the following text:\n" + full_text
@@ -267,10 +260,7 @@ def is_supported_by_ytdlp(url):
         r'ted\.com/talks',
         r'coursera\.org',
         r'khanacademy\.org',
-        r'archive\.org',
-        r'pocketcasts\.com/podcast',
-        r'player\.soundon\.fm',
-        r'podcasts\.apple\.com'
+        r'archive\.org'
     ]
     
     # 如果 URL 不匹配任何已知的影片網站模式，直接返回 False
@@ -497,366 +487,6 @@ def audio_transcription(video_url):
         return ["音頻轉錄失敗。"]    
 
 
-def is_pocketcasts_url(url):
-    """檢查是否為 Pocket Casts URL"""
-    return 'pocketcasts.com/podcast' in url.lower()
-
-def is_soundon_url(url):
-    """檢查是否為 SoundOn URL"""
-    return 'player.soundon.fm' in url.lower() or 'soundon.fm' in url.lower()
-
-def is_apple_podcast_url(url):
-    """檢查是否為 Apple Podcast URL"""
-    return 'podcasts.apple.com' in url.lower()
-
-def extract_rss_from_pocketcasts(url):
-    """
-    從 Pocket Casts 頁面提取 RSS feed URL
-    """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        # 從頁面內容中查找 RSS feed URL
-        # Pocket Casts 頁面通常包含原始 RSS feed 信息
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 嘗試多種方式找到 RSS feed
-        patterns = [
-            r'"feedUrl"\s*:\s*"([^"]+)"',
-            r'"feed_url"\s*:\s*"([^"]+)"',
-            r'"rssUrl"\s*:\s*"([^"]+)"',
-            r'feed[Uu]rl["\']?\s*[:=]\s*["\']([^"\',]+)["\']',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, response.text)
-            if match:
-                rss_url = match.group(1)
-                # 處理可能的轉義字符
-                rss_url = rss_url.replace('\\/', '/')
-                print(f"Found RSS feed URL: {rss_url}")
-                return rss_url
-        
-        print("Could not find RSS feed URL in Pocket Casts page")
-        return None
-        
-    except Exception as e:
-        print(f"Error extracting RSS from Pocket Casts: {e}")
-        return None
-
-def extract_rss_from_soundon(url):
-    """
-    從 SoundOn 頁面提取 RSS feed URL
-    SoundOn 的 RSS feed 通常在頁面的 link 標籤中
-    """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 查找 RSS feed link 標籤
-        rss_link = soup.find('link', {'type': 'application/rss+xml'})
-        if rss_link and rss_link.get('href'):
-            rss_url = rss_link.get('href')
-            print(f"Found SoundOn RSS feed URL: {rss_url}")
-            return rss_url
-        
-        # 嘗試從 meta 標籤中查找
-        meta_rss = soup.find('meta', {'property': 'og:rss'})
-        if meta_rss and meta_rss.get('content'):
-            rss_url = meta_rss.get('content')
-            print(f"Found SoundOn RSS feed URL from meta: {rss_url}")
-            return rss_url
-        
-        # 嘗試從頁面內容中用正則表達式查找
-        patterns = [
-            r'"rss"\s*:\s*"([^"]+)"',
-            r'"feedUrl"\s*:\s*"([^"]+)"',
-            r'https://[^"\s]+\.rss',
-            r'https://feeds\.soundon\.fm/[^"\s]+',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, response.text)
-            if match:
-                rss_url = match.group(0) if 'https://' in pattern else match.group(1)
-                rss_url = rss_url.replace('\\/', '/')
-                print(f"Found SoundOn RSS feed URL: {rss_url}")
-                return rss_url
-        
-        print("Could not find RSS feed URL in SoundOn page")
-        return None
-        
-    except Exception as e:
-        print(f"Error extracting RSS from SoundOn: {e}")
-        return None
-
-def extract_rss_from_apple_podcast(url):
-    """
-    從 Apple Podcast 頁面提取 RSS feed URL
-    Apple Podcast 需要通過 iTunes API 來獲取 RSS feed
-    """
-    try:
-        # 從 URL 中提取 podcast ID
-        # URL 格式: https://podcasts.apple.com/{country}/podcast/{name}/id{podcast_id}
-        match = re.search(r'/id(\d+)', url)
-        if not match:
-            print("Could not extract podcast ID from Apple Podcast URL")
-            return None
-        
-        podcast_id = match.group(1)
-        print(f"Found Apple Podcast ID: {podcast_id}")
-        
-        # 使用 iTunes API 查詢 podcast 信息
-        api_url = f"https://itunes.apple.com/lookup?id={podcast_id}&entity=podcast"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(api_url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        if data.get('resultCount', 0) > 0:
-            results = data.get('results', [])
-            for result in results:
-                if result.get('kind') == 'podcast' and result.get('feedUrl'):
-                    rss_url = result.get('feedUrl')
-                    print(f"Found Apple Podcast RSS feed URL: {rss_url}")
-                    return rss_url
-        
-        print("Could not find RSS feed URL from Apple Podcast API")
-        return None
-        
-    except Exception as e:
-        print(f"Error extracting RSS from Apple Podcast: {e}")
-        return None
-
-def get_latest_podcast_episode(rss_url, max_episodes=1):
-    """
-    從 RSS feed 獲取最新的 podcast episode(s)
-    返回 episode 標題和音頻 URL 列表
-    """
-    try:
-        print(f"Fetching RSS feed: {rss_url}")
-        feed = feedparser.parse(rss_url)
-        
-        if not feed.entries:
-            print("No episodes found in RSS feed")
-            return []
-        
-        episodes = []
-        for entry in feed.entries[:max_episodes]:
-            title = entry.get('title', 'Unknown Episode')
-            
-            # 尋找音頻 URL
-            audio_url = None
-            
-            # 檢查 enclosures (常見的 podcast 音頻位置)
-            if hasattr(entry, 'enclosures') and entry.enclosures:
-                for enclosure in entry.enclosures:
-                    if 'audio' in enclosure.get('type', ''):
-                        audio_url = enclosure.get('href') or enclosure.get('url')
-                        break
-            
-            # 檢查 links
-            if not audio_url and hasattr(entry, 'links'):
-                for link in entry.links:
-                    if 'audio' in link.get('type', ''):
-                        audio_url = link.get('href')
-                        break
-            
-            # 檢查 media_content
-            if not audio_url and hasattr(entry, 'media_content'):
-                for media in entry.media_content:
-                    if 'audio' in media.get('type', ''):
-                        audio_url = media.get('url')
-                        break
-            
-            if audio_url:
-                episodes.append({
-                    'title': title,
-                    'audio_url': audio_url,
-                    'description': entry.get('summary', '')
-                })
-                print(f"Found episode: {title}")
-            else:
-                print(f"No audio URL found for episode: {title}")
-        
-        return episodes
-        
-    except Exception as e:
-        print(f"Error parsing RSS feed: {e}")
-        return []
-
-def download_and_transcribe_podcast(audio_url):
-    """
-    下載 podcast 音頻並使用 Whisper 轉錄
-    """
-    try:
-        print(f"Downloading podcast audio from: {audio_url}")
-        
-        # 下載音頻文件
-        temp_audio_path = f"/tmp/{str(uuid.uuid4())}.mp3"
-        response = requests.get(audio_url, stream=True, timeout=300)
-        response.raise_for_status()
-        
-        with open(temp_audio_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        print(f"Audio downloaded to {temp_audio_path}")
-        
-        # 載入音頻文件
-        audio_file = AudioSegment.from_file(temp_audio_path)
-        
-        # 分割成較小的塊進行轉錄(100秒一塊)
-        chunk_duration = 100 * 1000  # 毫秒
-        chunks = [audio_file[i:i+chunk_duration] for i in range(0, len(audio_file), chunk_duration)]
-        
-        print(f"Audio split into {len(chunks)} chunks for transcription")
-        
-        transcript = ""
-        for i, chunk in enumerate(chunks):
-            print(f"Transcribing chunk {i+1}/{len(chunks)}")
-            temp_chunk_path = f"/tmp/{str(uuid.uuid4())}.wav"
-            chunk.export(temp_chunk_path, format="wav")
-            
-            # 使用 Groq Whisper API 轉錄
-            curl_command = [
-                "curl",
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                "-H", f"Authorization: Bearer {groq_api_key}",
-                "-H", "Content-Type: multipart/form-data",
-                "-F", f"file=@{temp_chunk_path}",
-                "-F", "model=whisper-large-v3"
-            ]
-            
-            result = subprocess.run(curl_command, capture_output=True, text=True)
-            
-            try:
-                response_json = json.loads(result.stdout)
-                transcript += response_json.get("text", "")
-            except (KeyError, json.JSONDecodeError) as e:
-                print(f"Error decoding transcription response: {e}")
-            
-            os.remove(temp_chunk_path)
-        
-        # 清理下載的音頻文件
-        os.remove(temp_audio_path)
-        
-        # 將轉錄文本分割成chunks
-        output_chunks = []
-        current_chunk = ""
-        words = transcript.split()
-        
-        for word in words:
-            if len(current_chunk) + len(word) + 1 <= chunk_size:
-                current_chunk += word + ' '
-            else:
-                output_chunks.append(current_chunk.strip())
-                current_chunk = word + ' '
-        
-        if current_chunk:
-            output_chunks.append(current_chunk.strip())
-        
-        return output_chunks
-        
-    except Exception as e:
-        print(f"Error downloading and transcribing podcast: {e}")
-        return ["Podcast 音頻轉錄失敗。"]
-
-def process_pocketcasts_url(url):
-    """
-    處理 Pocket Casts URL,提取並轉錄最新的 podcast episode
-    """
-    try:
-        # 1. 從 Pocket Casts 頁面提取 RSS feed URL
-        rss_url = extract_rss_from_pocketcasts(url)
-        if not rss_url:
-            return ["無法從 Pocket Casts 頁面提取 RSS feed。"]
-        
-        # 2. 從 RSS feed 獲取最新 episode
-        episodes = get_latest_podcast_episode(rss_url, max_episodes=1)
-        if not episodes:
-            return ["無法從 RSS feed 獲取 podcast episodes。"]
-        
-        episode = episodes[0]
-        print(f"Processing episode: {episode['title']}")
-        
-        # 3. 下載並轉錄音頻
-        transcript_chunks = download_and_transcribe_podcast(episode['audio_url'])
-        
-        return transcript_chunks
-        
-    except Exception as e:
-        print(f"Error processing Pocket Casts URL: {e}")
-        return ["處理 Pocket Casts URL 時發生錯誤。"]
-
-def process_soundon_url(url):
-    """
-    處理 SoundOn URL,提取並轉錄最新的 podcast episode
-    """
-    try:
-        # 1. 從 SoundOn 頁面提取 RSS feed URL
-        rss_url = extract_rss_from_soundon(url)
-        if not rss_url:
-            return ["無法從 SoundOn 頁面提取 RSS feed。"]
-        
-        # 2. 從 RSS feed 獲取最新 episode
-        episodes = get_latest_podcast_episode(rss_url, max_episodes=1)
-        if not episodes:
-            return ["無法從 RSS feed 獲取 podcast episodes。"]
-        
-        episode = episodes[0]
-        print(f"Processing SoundOn episode: {episode['title']}")
-        
-        # 3. 下載並轉錄音頻
-        transcript_chunks = download_and_transcribe_podcast(episode['audio_url'])
-        
-        return transcript_chunks
-        
-    except Exception as e:
-        print(f"Error processing SoundOn URL: {e}")
-        return ["處理 SoundOn URL 時發生錯誤。"]
-
-def process_apple_podcast_url(url):
-    """
-    處理 Apple Podcast URL,提取並轉錄最新的 podcast episode
-    """
-    try:
-        # 1. 從 Apple Podcast 提取 RSS feed URL
-        rss_url = extract_rss_from_apple_podcast(url)
-        if not rss_url:
-            return ["無法從 Apple Podcast 提取 RSS feed。"]
-        
-        # 2. 從 RSS feed 獲取最新 episode
-        episodes = get_latest_podcast_episode(rss_url, max_episodes=1)
-        if not episodes:
-            return ["無法從 RSS feed 獲取 podcast episodes。"]
-        
-        episode = episodes[0]
-        print(f"Processing Apple Podcast episode: {episode['title']}")
-        
-        # 3. 下載並轉錄音頻
-        transcript_chunks = download_and_transcribe_podcast(episode['audio_url'])
-        
-        return transcript_chunks
-        
-    except Exception as e:
-        print(f"Error processing Apple Podcast URL: {e}")
-        return ["處理 Apple Podcast URL 時發生錯誤。"]
-
 def call_gpt_api(prompt, additional_messages=[]):
     headers = {
         "Authorization": f"Bearer {openai_api_key}",
@@ -885,18 +515,6 @@ async def handle_start(update, context):
 async def handle_help(update, context):
     return await handle('help', update, context)
 
-async def handle_language(update, context):
-    """處理語言切換命令"""
-    return await handle('language', update, context)
-
-async def handle_clear_context(update, context):
-    """清除對話歷史"""
-    return await handle('clear_context', update, context)
-
-async def handle_show_context(update, context):
-    """顯示當前對話上下文"""
-    return await handle('show_context', update, context)
-
 async def handle_summarize(update, context):
      return await handle('summarize', update, context)
 
@@ -907,22 +525,8 @@ async def handle_file(update, context):
 # async def handle_button_click(update, context):
 #     return await handle('button_click', update, context)
 async def handle_button_click(update, context):
-    """處理按鈕點擊事件,包括語言切換"""
     query = update.callback_query
     await query.answer()
-    
-    # 處理語言切換按鈕
-    if query.data.startswith('lang_'):
-        language = query.data.split('_')[1]
-        context.user_data['language'] = language
-        
-        lang_name = SUPPORTED_LANGUAGES.get(language, language)
-        await query.edit_message_text(
-            text=f"✅ 語言已切換為: {lang_name}\nLanguage switched to: {lang_name}"
-        )
-        return
-    
-    # 其他按鈕處理可以在這裡添加
 
 async def handle_yt2audio(update, context):
     chat_id = update.effective_chat.id
@@ -1054,20 +658,8 @@ def process_user_input(user_input):
     url_pattern = re.compile(r"https?://")
 
     if url_pattern.match(user_input):
-        # 檢查是否為 Pocket Casts URL
-        if is_pocketcasts_url(user_input):
-            # 處理 Pocket Casts podcast
-            text_array = process_pocketcasts_url(user_input)
-        # 檢查是否為 SoundOn URL
-        elif is_soundon_url(user_input):
-            # 處理 SoundOn podcast
-            text_array = process_soundon_url(user_input)
-        # 檢查是否為 Apple Podcast URL
-        elif is_apple_podcast_url(user_input):
-            # 處理 Apple Podcast
-            text_array = process_apple_podcast_url(user_input)
         # 檢查是否為 yt-dlp 支援的影片網站
-        elif is_supported_by_ytdlp(user_input):
+        if is_supported_by_ytdlp(user_input):
             # 如果是影片網址，調用通用字幕處理函數
             text_array = retrieve_video_transcript_from_url(user_input)
         else:
@@ -1101,9 +693,6 @@ def set_my_commands(telegram_token):
     commands = [
         {"command": "start", "description": "確認機器人是否在線"},
         {"command": "help", "description": "顯示此幫助訊息"},
-        {"command": "lang", "description": "切換語言 Switch language"},
-        {"command": "context", "description": "顯示對話上下文 Show context"},
-        {"command": "clear", "description": "清除對話歷史 Clear history"},
         {"command": "yt2audio", "description": "下載影片音頻（支援 YouTube、Vimeo、Bilibili 等）"},
         {"command": "yt2text", "description": "將影片轉成文字（支援 YouTube、Vimeo、Bilibili 等）"},
     ]
@@ -1134,121 +723,28 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家Oli Family - Summary機器人 。v20251119。可以幫您自動總結為繁體中文的內容。")
+                                                text="我是江家機器人Oli。v20250514。可以幫您自動總結為中文的內容。")
         elif action == 'help':
             help_text = """
-   I can summarize text, URLs, PDFs, video and podcast content for you. 
-   請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為繁體中文的內容。
-   支援影片網站：YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch 等 1000+ 網站
-   支援 Podcast：Pocket Casts、SoundOn、Apple Podcast 及各種 RSS feed podcast
-   Here are the available commands:
-     /start - Start the bot
-     /help - Show this help message
-     /lang - Switch language (切換語言)
-     /context - Show current context (顯示對話上下文)
-     /clear - Clear conversation history (清除對話歷史)
-     /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
-     /yt2text <Video URL> - Convert video to text (支援 YouTube、Vimeo、Bilibili 等)    
-   You can also send me any text or URL to summarize.
-   After summarizing, you can ask follow-up questions about the content.
+            I can summarize text, URLs, PDFs and video content for you. 
+            請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為繁體中文的內容。
+            支援影片網站：YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch 等 1000+ 網站
+            Here are the available commands:
+            /start - Start the bot
+            /help - Show this help message
+            /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
+            /yt2text <Video URL> - Convert video to text (支援 YouTube、Vimeo、Bilibili 等)
+            
+            You can also send me any text or URL to summarize.
             """
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text)
-        elif action == 'language':
-            # 顯示語言選擇按鈕
-            current_lang = context.user_data.get('language', 'zh-TW')
-            current_lang_name = SUPPORTED_LANGUAGES.get(current_lang, 'Unknown')
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("🇹🇼 繁體中文", callback_data='lang_zh-TW'),
-                    InlineKeyboardButton("🇬🇧 English", callback_data='lang_en')
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=processing_message.message_id,
-                text=f"Current language / 當前語言: {current_lang_name}\n\nPlease select a language / 請選擇語言:",
-                reply_markup=reply_markup
-            )
-        elif action == 'clear_context':
-            # 清除對話歷史
-            context.user_data['conversation_history'] = None
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=processing_message.message_id,
-                text="✅ 對話歷史已清除。下一次輸入將開始新的摘要。\nConversation history cleared. Next input will start a new summary."
-            )
-        elif action == 'show_context':
-            # 顯示當前對話上下文
-            history = context.user_data.get('conversation_history')
-            if history:
-                info_text = f"📋 當前對話上下文 / Current Context:\n\n"
-                info_text += f"🔗 來源 Source: {history.get('source_url', 'N/A')}\n"
-                info_text += f"📅 時間 Time: {history.get('timestamp', 'N/A')}\n"
-                info_text += f"💬 問答輪數 Q&A rounds: {len(history.get('messages', []))}\n"
-                info_text += f"📝 內容長度 Content length: {len(history.get('original_content', []))} paragraphs\n\n"
-                info_text += "你可以繼續提問或發送新的 URL 開始新摘要。\nYou can continue asking or send a new URL to start fresh."
-            else:
-                info_text = "📭 目前沒有對話歷史。\nNo conversation history available."
-            
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=processing_message.message_id,
-                text=info_text
-            )
         # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
             try:
                 user_input = update.message.text
-                
-                # 檢查是否為續問
-                history = context.user_data.get('conversation_history')
-                if history and not is_url(user_input) and len(user_input) < 500:
-                    # 處理續問
-                    language = context.user_data.get('language', 'zh-TW')
-                    
-                    # 構建對話歷史
-                    messages = [
-                        {"role": "system", "content": "You are a helpful assistant that answers questions about previously summarized content."}
-                    ]
-                    
-                    # 添加原始內容
-                    original_content = "\n".join(history.get('original_content', []))
-                    messages.append({"role": "user", "content": f"Original content:\n{original_content[:3000]}"})  # 限制長度
-                    
-                    # 添加摘要
-                    messages.append({"role": "assistant", "content": f"Summary:\n{history.get('summary', '')[:2000]}"})
-                    
-                    # 添加之前的對話
-                    for msg in history.get('messages', [])[-3:]:  # 只保留最近3輪對話
-                        messages.append(msg)
-                    
-                    # 添加當前問題
-                    messages.append({"role": "user", "content": user_input})
-                    
-                    # 呼叫 API
-                    answer = call_gpt_api(user_input, messages[:-1])  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
-                    
-                    # 保存對話歷史
-                    history['messages'].append({"role": "user", "content": user_input})
-                    history['messages'].append({"role": "assistant", "content": answer})
-                    context.user_data['conversation_history'] = history
-                    
-                    if show_processing and processing_message:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-                    
-                    await context.bot.send_message(chat_id=chat_id, text=f"💬 續問回答:\n\n{answer}")
-                    return
-                
-                # 正常的摘要流程
                 text_array = process_user_input(user_input)
                 if text_array:
-                    # 獲取用戶語言偏好
-                    language = context.user_data.get('language', 'zh-TW')
-                    
-                    summary = summarize(text_array, language=language)
+                    summary = summarize(text_array)
                     if is_url(user_input):
                         original_url = user_input
                         title = get_web_title(user_input)
@@ -1257,16 +753,6 @@ async def handle(action, update, context):
                         original_url = None
                         title = "短文之摘要"  
                         summary_with_original = f"📌 \n{summary}\n"
-                    
-                    # 保存對話歷史到 context.user_data
-                    context.user_data['conversation_history'] = {
-                        'original_content': text_array,
-                        'summary': summary,
-                        'source_url': original_url or 'text input',
-                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'messages': [],
-                        'language': language
-                    }
                     
                     # 移除這一行，不需要轉義普通文本
                     # 在使用時加入條件判斷
@@ -1283,8 +769,6 @@ async def handle(action, update, context):
                         "telegram_id": user_id,
                         "url": original_url,
                         "summary": summary_with_original,
-                        "original_content": text_array,  # 新增
-                        "language": language,  # 新增
                         "timestamp": datetime.now()
                     }
                     summary_collection.insert_one(summary_data)
@@ -1435,10 +919,6 @@ def main():
         application = ApplicationBuilder().token(telegram_token).build()
         start_handler = CommandHandler('start', handle_start)
         help_handler = CommandHandler('help', handle_help)
-        lang_handler = CommandHandler('lang', handle_language)
-        language_handler = CommandHandler('language', handle_language)
-        clear_handler = CommandHandler('clear', handle_clear_context)
-        context_handler = CommandHandler('context', handle_show_context)
         yt2audio_handler = CommandHandler('yt2audio', handle_yt2audio)
         yt2text_handler = CommandHandler('yt2text', handle_yt2text)
         set_my_commands(telegram_token)
@@ -1450,10 +930,6 @@ def main():
         application.add_handler(file_image_handler)
         application.add_handler(start_handler)
         application.add_handler(help_handler)
-        application.add_handler(lang_handler)
-        application.add_handler(language_handler)
-        application.add_handler(clear_handler)
-        application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)
         application.add_handler(yt2text_handler)
         application.add_handler(summarize_handler)

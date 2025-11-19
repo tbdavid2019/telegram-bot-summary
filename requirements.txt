@@ -32,3 +32,4 @@ beautifulsoup4
 lxml
 pymongo
 webvtt-py
+feedparser
