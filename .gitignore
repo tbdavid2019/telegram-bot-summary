@@ -4,3 +4,6 @@ main_production.py
 cookies.txt
 公開版本env.txt
 .venv/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store

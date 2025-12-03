@@ -8,17 +8,13 @@ import trafilatura
 import uuid
 import requests
 from openai import OpenAI
-from duckduckgo_search import AsyncDDGS
 from markitdown import MarkItDown
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters, ApplicationBuilder
 from bs4 import BeautifulSoup
 from telegram.helpers import escape_markdown
 from pymongo import MongoClient
 from datetime import datetime
-from webvtt import WebVTT
 import feedparser
 
 import smtplib
@@ -132,25 +128,47 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
         print(f"Failed to send email: {e}")
 
 
-# 從環境變數中取得 OpenAI API Key
-openai_api_key = os.environ.get("OPENAI_API_KEY", "YOUR_API_KEY")
-telegram_token = os.environ.get("TELEGRAM_TOKEN", "xxx")
+# LLM1 設定 (主要模型)
+llm_api_key = os.environ.get("LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "YOUR_API_KEY"))  # 向後兼容
 model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
-lang = os.environ.get("TS_LANG", "繁體中文")
-ddg_region = os.environ.get("DDG_REGION", "wt-wt")
-chunk_size = int(os.environ.get("CHUNK_SIZE", 2100))
-allowed_users = os.environ.get("ALLOWED_USERS", "")
-use_audio_fallback = int(os.environ.get("USE_AUDIO_FALLBACK", "0"))
-# 添加 GROQ API Key
-groq_api_key = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
 base_url = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+
+# LLM2 設定 (備用模型,可選)
+llm2_api_key = os.environ.get("LLM2_API_KEY", "")
+llm2_model = os.environ.get("LLM2_MODEL", "")
+llm2_base_url = os.environ.get("LLM2_BASE_URL", "")
+use_llm2 = bool(llm2_api_key and llm2_model and llm2_base_url)  # 只有三個都設定才啟用 LLM2
+
+# Telegram 設定
+telegram_token = os.environ.get("TELEGRAM_TOKEN", "xxx")
+allowed_users = os.environ.get("ALLOWED_USERS", "")
+show_processing = int(os.environ.get("SHOW_PROCESSING", "1"))
+
+# 其他設定
+lang = os.environ.get("TS_LANG", "繁體中文")
+chunk_size = int(os.environ.get("CHUNK_SIZE", 2100))
+use_audio_fallback = int(os.environ.get("USE_AUDIO_FALLBACK", "0"))
+
+# GROQ API Key (用於 Whisper 語音轉文字)
+groq_api_key = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
+
+# 可用的 LLM 模型列表 (由 LLM_MODEL 和 LLM2_MODEL 組成)
+def get_available_models():
+    models = []
+    if model:
+        models.append(model)
+    if llm2_model and llm2_model not in models:
+        models.append(llm2_model)
+    return models if models else ["gpt-4o-mini"]  # 預設備用
+
+# 解答之書 API URL
+ANSWER_BOOK_API = os.environ.get("ANSWER_BOOK_API", "http://answerbook.david888.com/answersOriginal")
+
 # 添加 mongodb 紀錄功能
 mongo_uri = os.environ.get("MONGO_URI", "")
 mongo_client = MongoClient(mongo_uri)
 db = mongo_client["bot_database"]
 summary_collection = db["summaries"]
-# 從環境變量中獲取設置，預設為 1（開啟）
-show_processing = int(os.environ.get("SHOW_PROCESSING", "1"))
 
 # 語言配置
 SUPPORTED_LANGUAGES = {
@@ -160,7 +178,8 @@ SUPPORTED_LANGUAGES = {
 
 # 繁體中文 System Prompt
 SYSTEM_PROMPT_ZH = (
-    "請將以下原始影片內容總結為五個部分，**僅以純文字格式輸出，不使用 Markdown 語法或符號**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔\n\n"
+    "請將以下原始影片內容總結為五個部分，**僅以純文字格式輸出，不使用 Markdown 語法或符號**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔。\n\n"
+    "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結影片的核心知識內容。\n\n"
     "⓵ 【容易懂 Easy Know】：使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
     "⓶ 【總結 Overall Summary】：撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
     "⓷ 【觀點 Viewpoints】：列出影片中提到的**3～7個主要觀點**，每點以條列方式呈現，並可加入簡短評論或補充說明。\n\n"
@@ -171,6 +190,7 @@ SYSTEM_PROMPT_ZH = (
 # 英文 System Prompt
 SYSTEM_PROMPT_EN = (
     "Please summarize the following content into five sections in **plain text format only, without using Markdown syntax or symbols**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
+    "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content of the video.\n\n"
     "⓵ 【Easy Know】: Use simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
     "⓶ 【Overall Summary】: Write a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
     "⓷ 【Viewpoints】: List **3-7 main viewpoints** mentioned in the content. Present each point in bullet form, and add brief comments or supplementary explanations.\n\n"
@@ -205,13 +225,8 @@ def scrape_text_from_url(url):
         print(f"Error: {e}")
         return [], f"抓取過程中發生錯誤：{str(e)}"  # 返回兩個值：空內容和錯誤信息
 
-async def search_results(keywords):
-    print(keywords, ddg_region)
-    results = await AsyncDDGS().text(keywords, region=ddg_region, safesearch='off', max_results=6)
-    return results
 
-
-def summarize(text_array, language='zh-TW'):
+def summarize(text_array, language='zh-TW', selected_model=None):
     try:
         # 將所有段落合併成一個完整的文本
         full_text = "\n".join(text_array)
@@ -233,7 +248,7 @@ def summarize(text_array, language='zh-TW'):
         prompt = "總結 the following text:\n" + full_text
         
         # 呼叫 GPT API 生成摘要
-        summary = call_gpt_api(prompt, system_messages)
+        summary = call_gpt_api(prompt, system_messages, selected_model=selected_model)
 
         # 加入機器人宣傳語
         summary += "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
@@ -857,20 +872,33 @@ def process_apple_podcast_url(url):
         print(f"Error processing Apple Podcast URL: {e}")
         return ["處理 Apple Podcast URL 時發生錯誤。"]
 
-def call_gpt_api(prompt, additional_messages=[]):
+def call_gpt_api(prompt, additional_messages=[], use_llm2_model=False, selected_model=None):
+    """呼叫 LLM API。
+    - use_llm2_model=True 且 LLM2 已配置，則使用 LLM2
+    - selected_model 可指定特定模型 (用戶透過 /model 選擇)
+    """
+    if use_llm2_model and use_llm2:
+        api_key = llm2_api_key
+        api_model = llm2_model
+        api_base_url = llm2_base_url
+    else:
+        api_key = llm_api_key
+        api_model = selected_model if selected_model else model
+        api_base_url = base_url
+    
     headers = {
-        "Authorization": f"Bearer {openai_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     data = {
-        "model": model,
+        "model": api_model,
         "messages": additional_messages + [
             {"role": "user", "content": prompt}
         ],
     }
 
     try:
-        response = requests.post(f"{base_url}/chat/completions", headers=headers, json=data)
+        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data)
         response.raise_for_status()  # 如果返回非 200 的狀態碼會拋出異常
         message = response.json()["choices"][0]["message"]["content"].strip()
         return message
@@ -884,6 +912,14 @@ async def handle_start(update, context):
 
 async def handle_help(update, context):
     return await handle('help', update, context)
+
+async def handle_model(update, context):
+    """處理模型切換命令"""
+    return await handle('model', update, context)
+
+async def handle_boa(update, context):
+    """取回解答之書的回答"""
+    return await handle('boa', update, context)
 
 async def handle_language(update, context):
     """處理語言切換命令"""
@@ -907,7 +943,7 @@ async def handle_file(update, context):
 # async def handle_button_click(update, context):
 #     return await handle('button_click', update, context)
 async def handle_button_click(update, context):
-    """處理按鈕點擊事件,包括語言切換"""
+    """處理按鈕點擊事件,包括語言切換和模型選擇"""
     query = update.callback_query
     await query.answer()
     
@@ -920,6 +956,21 @@ async def handle_button_click(update, context):
         await query.edit_message_text(
             text=f"✅ 語言已切換為: {lang_name}\nLanguage switched to: {lang_name}"
         )
+        return
+    
+    # 處理模型切換按鈕
+    if query.data.startswith('model_'):
+        selected_model = query.data[6:]  # 去掉 'model_' 前綴
+        available_models = get_available_models()
+        if selected_model in available_models:
+            context.user_data['selected_model'] = selected_model
+            await query.edit_message_text(
+                text=f"✅ 模型已切換為: {selected_model}"
+            )
+        else:
+            await query.edit_message_text(
+                text=f"❌ 模型不可用: {selected_model}"
+            )
         return
     
     # 其他按鈕處理可以在這裡添加
@@ -1102,6 +1153,8 @@ def set_my_commands(telegram_token):
         {"command": "start", "description": "確認機器人是否在線"},
         {"command": "help", "description": "顯示此幫助訊息"},
         {"command": "lang", "description": "切換語言 Switch language"},
+        {"command": "model", "description": "切換/列出模型 Switch/List models"},
+        {"command": "boa", "description": "解答之書 Book of Answers"},
         {"command": "context", "description": "顯示對話上下文 Show context"},
         {"command": "clear", "description": "清除對話歷史 Clear history"},
         {"command": "yt2audio", "description": "下載影片音頻（支援 YouTube、Vimeo、Bilibili 等）"},
@@ -1134,7 +1187,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="我是江家Oli Family - Summary機器人 。v20251119。可以幫您自動總結為繁體中文的內容。")
+                                                text="Oli Family - Summary機器人 。v20251203。可以幫您自動總結為繁體中文或英文的內容。")
         elif action == 'help':
             help_text = """
    I can summarize text, URLs, PDFs, video and podcast content for you. 
@@ -1145,6 +1198,8 @@ async def handle(action, update, context):
      /start - Start the bot
      /help - Show this help message
      /lang - Switch language (切換語言)
+     /model - Switch/List LLM models (切換/列出模型)
+     /boa - Book of Answers 解答之書
      /context - Show current context (顯示對話上下文)
      /clear - Clear conversation history (清除對話歷史)
      /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
@@ -1198,6 +1253,65 @@ async def handle(action, update, context):
                 message_id=processing_message.message_id,
                 text=info_text
             )
+        elif action == 'model':
+            # 處理模型切換命令
+            args = update.message.text.split()[1:] if update.message.text else []
+            current_model = context.user_data.get('selected_model', model)
+            available_models = get_available_models()
+            
+            if args:
+                # 用戶指定了模型
+                requested_model = args[0].strip()
+                if requested_model in available_models:
+                    context.user_data['selected_model'] = requested_model
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=processing_message.message_id,
+                        text=f"✅ 模型已切換至: {requested_model}"
+                    )
+                else:
+                    models_list = "\n".join([f"  • {m}" for m in available_models])
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=processing_message.message_id,
+                        text=f"❌ 模型不存在: {requested_model}\n\n📋 可用模型:\n{models_list}"
+                    )
+            else:
+                # 列出可用模型，使用按鈕選擇
+                keyboard = []
+                for m in available_models:
+                    marker = "✅ " if m == current_model else ""
+                    keyboard.append([InlineKeyboardButton(f"{marker}{m}", callback_data=f'model_{m}')])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=f"🤖 當前模型: {current_model}\n\n請選擇模型:",
+                    reply_markup=reply_markup
+                )
+        elif action == 'boa':
+            # 取回解答之書的回答
+            try:
+                response = requests.get(ANSWER_BOOK_API, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                answer = data.get('answer', '無法取得回答')
+                
+                boa_text = f"📖 解答之書 Book of Answers\n\n{answer}"
+                
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=boa_text
+                )
+            except Exception as e:
+                print(f"Error fetching Book of Answers: {e}")
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text="❌ 無法取得解答之書的回答"
+                )
         # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
             try:
@@ -1228,8 +1342,9 @@ async def handle(action, update, context):
                     # 添加當前問題
                     messages.append({"role": "user", "content": user_input})
                     
-                    # 呼叫 API
-                    answer = call_gpt_api(user_input, messages[:-1])  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
+                    # 呼叫 API (使用用戶選擇的模型)
+                    selected_model = context.user_data.get('selected_model', None)
+                    answer = call_gpt_api(user_input, messages[:-1], selected_model=selected_model)  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
                     
                     # 保存對話歷史
                     history['messages'].append({"role": "user", "content": user_input})
@@ -1245,10 +1360,11 @@ async def handle(action, update, context):
                 # 正常的摘要流程
                 text_array = process_user_input(user_input)
                 if text_array:
-                    # 獲取用戶語言偏好
+                    # 獲取用戶語言偏好和選擇的模型
                     language = context.user_data.get('language', 'zh-TW')
+                    selected_model = context.user_data.get('selected_model', None)
                     
-                    summary = summarize(text_array, language=language)
+                    summary = summarize(text_array, language=language, selected_model=selected_model)
                     if is_url(user_input):
                         original_url = user_input
                         title = get_web_title(user_input)
@@ -1357,7 +1473,7 @@ async def handle(action, update, context):
                         print("[DEBUG] 使用 openai.OpenAI() client")
                     else:
                         from litellm import openai as litellm_openai
-                        client = litellm_openai.OpenAI(api_key=openai_api_key, base_url=base_url)
+                        client = litellm_openai.OpenAI(api_key=llm_api_key, base_url=base_url)
                         print(f"[DEBUG] 使用 litellm.openai.OpenAI client, base_url={base_url}")
                     md = MarkItDown(llm_client=client, llm_model=model)
                 else:
@@ -1386,7 +1502,9 @@ async def handle(action, update, context):
                 # 直接對整個文本進行一次性摘要，不需要分塊處理
                 # 因為 LLM 可以處理高達 1,000,000 個 token
                 print(f"[DEBUG] 開始對整個文本進行摘要，文本長度: {len(text)} 字符")
-                summary = summarize([text])
+                language = context.user_data.get('language', 'zh-TW')
+                selected_model = context.user_data.get('selected_model', None)
+                summary = summarize([text], language=language, selected_model=selected_model)
 
                 # 轉義 Markdown 特殊字符
                 escaped_summary = escape_markdown(summary, version=2)
@@ -1437,6 +1555,8 @@ def main():
         help_handler = CommandHandler('help', handle_help)
         lang_handler = CommandHandler('lang', handle_language)
         language_handler = CommandHandler('language', handle_language)
+        model_handler = CommandHandler('model', handle_model)
+        boa_handler = CommandHandler('boa', handle_boa)
         clear_handler = CommandHandler('clear', handle_clear_context)
         context_handler = CommandHandler('context', handle_show_context)
         yt2audio_handler = CommandHandler('yt2audio', handle_yt2audio)
@@ -1452,6 +1572,8 @@ def main():
         application.add_handler(help_handler)
         application.add_handler(lang_handler)
         application.add_handler(language_handler)
+        application.add_handler(model_handler)
+        application.add_handler(boa_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

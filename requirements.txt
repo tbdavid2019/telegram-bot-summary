@@ -1,17 +1,11 @@
 # async handler
 asyncio==3.4.3
 
-# progress tracking
-tqdm==4.66.4
-
 openai
 litellm
 
 # text extraction
 trafilatura==1.9.0 
-
-# duckduckgo
-duckduckgo_search==5.3.0b4
 
 # PDFs
 markitdown[all]
@@ -26,10 +20,9 @@ youtube_transcript_api==0.6.2
 yt-dlp
 
 # pydub for audio processing
-pydub==0.25.1
+pydub
 
 beautifulsoup4
 lxml
 pymongo
-webvtt-py
 feedparser

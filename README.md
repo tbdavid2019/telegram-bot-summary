@@ -5,7 +5,37 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 ---
 
-## 📅 最新更新 (2025-11-19)
+## 📅 最新更新 (2025-12-03)
+
+### ✨ 新功能
+
+#### 1. LLM 模型切換功能 🤖
+- 新增 `/model` 命令，可切換或列出可用的 LLM 模型
+- 使用方式：
+  - `/model` - 列出可用模型並顯示選擇按鈕
+  - `/model gemini-flash-latest` - 直接切換到指定模型
+- 可用模型由 `LLM_MODEL` 和 `LLM2_MODEL` 自動組成
+
+#### 2. 解答之書 Book of Answers 📖
+- 新增 `/boa` 命令，取回解答之書的智慧回答
+- API 來源：answerbook.david888.com
+
+#### 3. 環境變數重構 🔧
+- `OPENAI_API_KEY` 重新命名為 `LLM_API_KEY` (保留向後兼容)
+- 新增 LLM2 備用模型支援 (`LLM2_API_KEY`, `LLM2_MODEL`, `LLM2_BASE_URL`)
+- 新增 `ANSWER_BOOK_API` 環境變數
+
+#### 4. 廣告過濾功能 🚫
+- System Prompt 更新，自動識別並略過 YouTuber 業配廣告
+- 包括：VPN 推廣、訂閱服務、App 推廣、折扣碼等
+
+#### 5. 代碼清理 🧹
+- 移除未使用的 imports (`duckduckgo_search`, `tqdm`, `ThreadPoolExecutor`, `webvtt`)
+- 移除未使用的函數和變數
+
+---
+
+## 📅 過往更新 (2025-11-19)
 
 ### ✨ 新功能
 
@@ -78,6 +108,31 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        📅 時間: 2025-11-19 10:30:00
        💬 問答輪數: 3
        📝 內容長度: 45 paragraphs
+```
+
+### 場景 5: 切換 LLM 模型
+```
+👤 用戶: /model
+🤖 Bot: 🤖 當前模型: gemini-flash-latest
+       請選擇模型:
+       [✅ gemini-flash-latest]
+       [gpt-4o-mini]
+       [gpt-4o]
+       [claude-3-sonnet]
+
+👤 用戶: [點擊 gpt-4o]
+🤖 Bot: ✅ 模型已切換為: gpt-4o
+
+👤 用戶: /model claude-3-sonnet
+🤖 Bot: ✅ 模型已切換至: claude-3-sonnet
+```
+
+### 場景 6: 解答之書
+```
+👤 用戶: /boa
+🤖 Bot: 📖 解答之書 Book of Answers
+
+       你需要考慮其他方法
 ```
 
 ---
@@ -172,6 +227,8 @@ Telegram bot 可濃縮文字、URL、PDF 和 YouTube 影片的重點摘要。
 | /start | 確認機器人是否在線 |
 | /help | 顯示幫助訊息 |
 | /lang | 切換語言 (繁體中文 ⇄ English) |
+| /model | 切換/列出 LLM 模型 |
+| /boa | 解答之書 Book of Answers |
 | /context | 顯示當前對話上下文 |
 | /clear | 清除對話歷史 |
 | /yt2audio <URL> | 下載影片音頻 |
