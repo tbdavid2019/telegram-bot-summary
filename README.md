@@ -400,3 +400,15 @@ SMTP_CC_EMAILS=cc1@gmail.com,cc2@gmail.com
 
 # 啟用郵件發送功能 (1 啟用，0 禁用)
 ENABLE_EMAIL=1
+
+### 📅 最新更新 (2025-01-17)
+
+#### 1. YouTube 403 Forbidden 修正 (Deno 整合) 🛠️
+- **問題**: `yt-dlp` 近期遭遇 YouTube 對 `m3u8` 流的 403 Forbidden 封鎖，主要原因是無法正確解析新的 JS 簽名挑戰。
+- **解決方案**: 
+  - 集成 **Deno** 至 Docker 容器中，作為 `yt-dlp` 的 JavaScript runtime。
+  - 優化 `yt-dlp` 配置，移除可能導致問題的複雜參數，回歸穩定的 `default,-web_safari` 客戶端模擬。
+- **效果**: 成功解決下載失敗問題，並保持對各種格式的兼容性。
+
+#### 2. 配置簡化
+- 回歸最穩定的 `yt-dlp` 參數，讓其自動依賴 Deno 解決核心問題，而非依賴不隱定的 HTTP 協議過濾。

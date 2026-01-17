@@ -300,6 +300,9 @@ def is_supported_by_ytdlp(url):
             'quiet': True,
             'no_warnings': True,
             'cookiefile': './cookies.txt',
+            'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+            'force_ipv4': True,
+            'geo_bypass': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -361,6 +364,9 @@ def extract_video_transcript(video_url):
         'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
         'outtmpl': '/tmp/%(id)s.%(ext)s',
         'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
+        'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+        'force_ipv4': True,
+        'geo_bypass': True,
     }
 
     try:
@@ -439,7 +445,7 @@ def audio_transcription(video_url):
     try:
         # 使用 yt-dlp 下載音頻
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[protocol^=http]/best',
             'outtmpl': f'/tmp/{str(uuid.uuid4())}.%(ext)s',
             'ffmpeg_location': '/usr/bin/ffmpeg',
             'postprocessors': [{
@@ -449,6 +455,9 @@ def audio_transcription(video_url):
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
             'cookiefile': './cookies.txt',  # 使用 cookies.txt 檔案
+            'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+            'force_ipv4': True,
+            'geo_bypass': True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1002,6 +1011,9 @@ async def handle_yt2audio(update, context):
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
             'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
+            'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+            'force_ipv4': True,
+            'geo_bypass': True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1063,6 +1075,9 @@ def get_video_title(video_url):
             'quiet': True,
             'no_warnings': True,
             'cookiefile': './cookies.txt',
+            'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+            'force_ipv4': True,
+            'geo_bypass': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1187,7 +1202,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="Oli Family - Summary機器人 。v20251203。可以幫您自動總結為繁體中文或英文的內容。")
+                                                text="Oli 333 - Summary Bot。v20260117。可以幫您自動總結為繁體中文或英文的內容。")
         elif action == 'help':
             help_text = """
    I can summarize text, URLs, PDFs, video and podcast content for you. 
