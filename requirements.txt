@@ -18,6 +18,7 @@ youtube_transcript_api==0.6.2
 
 # yt-dlp for downloading YouTube audio
 yt-dlp
+# yt-dlp --update-to nightly
 
 # pydub for audio processing
 pydub
