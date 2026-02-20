@@ -297,6 +297,10 @@ def format_for_telegram(markdown_text):
         for br in soup.find_all('br'):
             br.replace_with("\n")
             
+        # 把 <hr> 替換為分隔線文字
+        for hr in soup.find_all('hr'):
+            hr.replace_with("\n----------\n")
+            
         # 把 <strong> 轉換為 <b>
         for strong in soup.find_all('strong'):
             strong.name = 'b'
