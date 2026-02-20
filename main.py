@@ -16,6 +16,7 @@ from telegram.helpers import escape_markdown
 from pymongo import MongoClient
 from datetime import datetime
 import feedparser
+import markdown
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -112,8 +113,9 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
             
         message["Subject"] = subject
 
-        # 添加郵件正文
-        message.attach(MIMEText(summary, "plain", "utf-8"))
+        # 添加郵件正文 (轉為 HTML 以支援 Markdown 排版)
+        html_summary = markdown.markdown(summary, extensions=['nl2br'])
+        message.attach(MIMEText(html_summary, "html", "utf-8"))
 
         # 發送郵件
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
@@ -178,24 +180,24 @@ SUPPORTED_LANGUAGES = {
 
 # 繁體中文 System Prompt
 SYSTEM_PROMPT_ZH = (
-    "請將以下原始影片內容總結為五個部分，**僅以純文字格式輸出，不使用 Markdown 語法或符號**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔。\n\n"
+    "請將以下原始影片內容總結為五個部分，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔。\n\n"
     "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結影片的核心知識內容。\n\n"
-    "⓵ 【容易懂 Easy Know】：使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
-    "⓶ 【總結 Overall Summary】：撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
-    "⓷ 【觀點 Viewpoints】：列出影片中提到的**3～7個主要觀點**，每點以條列方式呈現，並可加入簡短評論或補充說明。\n\n"
-    "⓸ 【摘要 Abstract】：列出**6～10個關鍵重點句**，每點簡短有力，前綴搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
+    "### ⓵ 【容易懂 Easy Know】\n使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
+    "### ⓶ 【總結 Overall Summary】\n撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
+    "### ⓷ 【觀點 Viewpoints】\n列出影片中提到的**3～7個主要觀點**，每點以清單（List）方式呈現，並可加入簡短評論或補充說明。\n\n"
+    "### ⓸ 【摘要 Abstract】\n列出**6～10個關鍵重點句**，每點簡短有力，作為清單項目，適當搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
     "⓹ 【FAQ 測驗】：根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
 )
 
 # 英文 System Prompt
 SYSTEM_PROMPT_EN = (
-    "Please summarize the following content into five sections in **plain text format only, without using Markdown syntax or symbols**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
+    "Please summarize the following content into five sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
     "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content of the video.\n\n"
-    "⓵ 【Easy Know】: Use simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
-    "⓶ 【Overall Summary】: Write a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
-    "⓷ 【Viewpoints】: List **3-7 main viewpoints** mentioned in the content. Present each point in bullet form, and add brief comments or supplementary explanations.\n\n"
-    "⓸ 【Abstract】: List **6-10 key highlight sentences**. Each point should be brief and powerful, prefixed with appropriate emoji symbols (such as ✅, ⚠️, 📌) to emphasize key information.\n\n"
-    "⓹ 【FAQ Quiz】: Generate **three multiple-choice questions** based on the content. Each question should have A, B, C, D options, followed by the correct answer and a brief explanation. Questions should cover important concepts or key knowledge points from the content.\n\n"
+    "### ⓵ 【Easy Know】\nUse simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
+    "### ⓶ 【Overall Summary】\nWrite a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
+    "### ⓷ 【Viewpoints】\nList **3-7 main viewpoints** mentioned in the content. Present each point in list form, and add brief comments or supplementary explanations.\n\n"
+    "### ⓸ 【Abstract】\nList **6-10 key highlight sentences** as a list. Each point should be brief and powerful, prefixed with appropriate emoji symbols (such as ✅, ⚠️, 📌) to emphasize key information.\n\n"
+    "### ⓹ 【FAQ Quiz】\nGenerate **three multiple-choice questions** based on the content. Each question should have A, B, C, D options, followed by the correct answer and a brief explanation. Questions should cover important concepts or key knowledge points from the content.\n\n"
 )
 
 
@@ -257,6 +259,65 @@ def summarize(text_array, language='zh-TW', selected_model=None):
     except Exception as e:
         print(f"Error: {e}")
         return "Unknown error! Please contact the owner. ok@vip.david888.com"
+
+def format_for_telegram(markdown_text):
+    """
+    將 Markdown 轉換成 Telegram 支援的有限 HTML 標籤
+    Telegram 僅支援 <b>, <i>, <u>, <s>, <a>, <code>, <pre>, <tg-spoiler> 等
+    不支援 <h1>~<h6>, <ul>, <li>, <p>, <br> 等標準 HTML
+    """
+    if not markdown_text:
+        return markdown_text
+        
+    try:
+        # 1. 將 Markdown 轉成完整 HTML
+        html = markdown.markdown(markdown_text, extensions=['nl2br'])
+        
+        # 2. 使用 BeautifulSoup 進行標籤轉換與過濾
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # 把標題 (<h1>~<h6>) 轉換為粗體並加換行
+        for v in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            new_text = f"<b>{v.get_text()}</b>\n\n"
+            v.replace_with(new_text)
+            
+        # 把清單項 (<li>) 轉換為帶有 bullet point 的文字
+        for li in soup.find_all('li'):
+            li.replace_with(f"• {li.get_text()}\n")
+            
+        # 移除 <ul> 和 <ol> 的外層包裹
+        for ul in soup.find_all(['ul', 'ol']):
+            ul.unwrap()
+            
+        # 把 <p> 轉換成帶有換行的純文字
+        for p in soup.find_all('p'):
+            p.replace_with(f"{p.get_text()}\n\n")
+            
+        # 把 <br> 替換為實際的換行符號
+        for br in soup.find_all('br'):
+            br.replace_with("\n")
+            
+        # 把 <strong> 轉換為 <b>
+        for strong in soup.find_all('strong'):
+            strong.name = 'b'
+            
+        # 把 <em> 轉換為 <i>
+        for em in soup.find_all('em'):
+            em.name = 'i'
+            
+        # 取得純文字並只保留 Telegram 允許的標籤
+        final_text = str(soup)
+        
+        # html.parser 的 unwrap 跟 replace_with 可能會留下多餘的全形空白或疊加換行，簡單清理
+        final_text = re.sub(r'\n{3,}', '\n\n', final_text)
+        # unescape 避免 &amp; 等實體在 Telegram 中顯示異常（雖然 Telegram HTML mode 有些自動處理，但清乾淨比較保險）
+        import html as html_lib
+        final_text = html_lib.unescape(final_text)
+        
+        return final_text.strip()
+    except Exception as e:
+        print(f"Error formatting for Telegram: {e}")
+        return markdown_text # 如果轉換失敗，退回原始文字
 
 
 
@@ -1428,18 +1489,22 @@ async def handle(action, update, context):
                         discord_message = f"🔔 新的摘要已生成：\n{summary_with_original}"
                         send_to_discord(discord_message)
                     
-                    # 處理長消息，直接使用原始文本，不進行轉義
-                    if len(summary_with_original) > 4000:
-                        parts = [summary_with_original[i:i+4000] for i in range(0, len(summary_with_original), 4000)]
+                    # 處理長消息，將 Markdown 轉換成 Telegram 支援的 HTML
+                    formatted_summary = format_for_telegram(summary_with_original)
+                    
+                    if len(formatted_summary) > 4000:
+                        parts = [formatted_summary[i:i+4000] for i in range(0, len(formatted_summary), 4000)]
                         for part in parts:
                             await context.bot.send_message(
                                 chat_id=chat_id,
-                                text=part
+                                text=part,
+                                parse_mode='HTML'
                             )
                     else:
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=summary_with_original
+                            text=formatted_summary,
+                            parse_mode='HTML'
                         )
                 else:
                     await context.bot.send_message(
