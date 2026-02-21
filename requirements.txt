@@ -28,3 +28,4 @@ lxml
 pymongo
 feedparser
 markdown==3.7
+jieba==0.42.1

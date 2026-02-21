@@ -17,6 +17,8 @@ from pymongo import MongoClient
 from datetime import datetime
 import feedparser
 import markdown
+import jieba
+import jieba.analyse
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -233,6 +235,10 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         # 將所有段落合併成一個完整的文本
         full_text = "\n".join(text_array)
         
+        # 使用 jieba 的 TextRank 演算法過濾掉無意義詞彙 (代名詞、副詞等)
+        # allowPOS 指定只保留: 地名(ns), 名詞(n), 動名詞(vn), 動詞(v), 英文(eng)
+        keywords = jieba.analyse.textrank(full_text, topK=5, allowPOS=('ns', 'n', 'vn', 'v', 'eng'))
+        
         # 根據語言選擇對應的 system prompt
         if language == 'en':
             system_content = SYSTEM_PROMPT_EN
@@ -251,6 +257,15 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         
         # 呼叫 GPT API 生成摘要
         summary = call_gpt_api(prompt, system_messages, selected_model=selected_model)
+
+        # 組合 Hashtag 字串
+        if keywords:
+            # 為了避免在 Telegram / Email 的 Markdown 中被當成 H1 大標題，
+            # 我們在 # 前面加上零寬度空白，或用正常的文字格式，這裡我們使用普通的文字區塊格式拼接
+            # Telegram HTML format won't interpret # format, but Markdown rendering in email will. 
+            # 所以加上跳脫字元 \ 確保 Email markdown 轉換安全
+            hashtag_str = " ".join([f"\\#{kw}" for kw in keywords])
+            summary += f"\n\n{hashtag_str}"
 
         # 加入機器人宣傳語
         summary += "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
