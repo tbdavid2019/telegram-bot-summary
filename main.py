@@ -17,8 +17,6 @@ from pymongo import MongoClient
 from datetime import datetime
 import feedparser
 import markdown
-import jieba
-import jieba.analyse
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -182,24 +180,26 @@ SUPPORTED_LANGUAGES = {
 
 # 繁體中文 System Prompt
 SYSTEM_PROMPT_ZH = (
-    "請將以下原始影片內容總結為五個部分，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。五個部分之間請用分隔線區隔。\n\n"
+    "請將以下原始影片內容總結為六個部分，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。六個部分之間請用分隔線區隔。\n\n"
     "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結影片的核心知識內容。\n\n"
     "### ⓵ 【容易懂 Easy Know】\n使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
     "### ⓶ 【總結 Overall Summary】\n撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
     "### ⓷ 【觀點 Viewpoints】\n列出影片中提到的**3～7個主要觀點**，每點以清單（List）方式呈現，並可加入簡短評論或補充說明。\n\n"
     "### ⓸ 【摘要 Abstract】\n列出**6～10個關鍵重點句**，每點簡短有力，作為清單項目，適當搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
-    "⓹ 【FAQ 測驗】：根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
+    "### ⓹ 【FAQ 測驗】\n根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
+    "### ⓺ 【關鍵標籤 Hashtags】\n請根據以上摘要，精煉出 5 個最重要的核心概念標籤。格式為傳統的井號標籤（例如：「#標籤1 #標籤2 #標籤3 #標籤4 #標籤5」），確保完全使用繁體中文，且各標籤之間以半形空格分隔。\n\n"
 )
 
 # 英文 System Prompt
 SYSTEM_PROMPT_EN = (
-    "Please summarize the following content into five sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
+    "Please summarize the following content into six sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
     "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content of the video.\n\n"
     "### ⓵ 【Easy Know】\nUse simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
     "### ⓶ 【Overall Summary】\nWrite a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
     "### ⓷ 【Viewpoints】\nList **3-7 main viewpoints** mentioned in the content. Present each point in list form, and add brief comments or supplementary explanations.\n\n"
     "### ⓸ 【Abstract】\nList **6-10 key highlight sentences** as a list. Each point should be brief and powerful, prefixed with appropriate emoji symbols (such as ✅, ⚠️, 📌) to emphasize key information.\n\n"
     "### ⓹ 【FAQ Quiz】\nGenerate **three multiple-choice questions** based on the content. Each question should have A, B, C, D options, followed by the correct answer and a brief explanation. Questions should cover important concepts or key knowledge points from the content.\n\n"
+    "### ⓺ 【Hashtags】\nPlease extract 5 core concept hashtags based on the summary above. The format should be standard hashtags (e.g., \"#Tag1 #Tag2 #Tag3 #Tag4 #Tag5\"), ensuring all tags are in English and separated by a half-width space.\n\n"
 )
 
 
@@ -235,10 +235,6 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         # 將所有段落合併成一個完整的文本
         full_text = "\n".join(text_array)
         
-        # 使用 jieba 的 TextRank 演算法過濾掉無意義詞彙 (代名詞、副詞等)
-        # allowPOS 指定只保留: 地名(ns), 名詞(n), 動名詞(vn), 動詞(v), 英文(eng)
-        keywords = jieba.analyse.textrank(full_text, topK=5, allowPOS=('ns', 'n', 'vn', 'v', 'eng'))
-        
         # 根據語言選擇對應的 system prompt
         if language == 'en':
             system_content = SYSTEM_PROMPT_EN
@@ -258,14 +254,10 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         # 呼叫 GPT API 生成摘要
         summary = call_gpt_api(prompt, system_messages, selected_model=selected_model)
 
-        # 組合 Hashtag 字串
-        if keywords:
-            # 為了避免在 Telegram / Email 的 Markdown 中被當成 H1 大標題，
-            # 我們在 # 前面加上零寬度空白，或用正常的文字格式，這裡我們使用普通的文字區塊格式拼接
-            # Telegram HTML format won't interpret # format, but Markdown rendering in email will. 
-            # 所以加上跳脫字元 \ 確保 Email markdown 轉換安全
-            hashtag_str = " ".join([f"\\#{kw}" for kw in keywords])
-            summary += f"\n\n{hashtag_str}"
+        # 針對 Hashtag 進行跳脫處理，避免被 Markdown 引擎誤判為 H1 標題
+        # (將前方為空白或行首，且後方不為空白與 # 的 # 替換為 \#)
+        if summary:
+            summary = re.sub(r'(?<!\S)#(?=[^\s#])', r'\#', summary)
 
         # 加入機器人宣傳語
         summary += "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
