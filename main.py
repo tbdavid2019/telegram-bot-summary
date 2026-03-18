@@ -405,8 +405,11 @@ def is_supported_by_ytdlp(url):
                 
                 return False
     except Exception as e:
-        print(f"URL {url} not supported by yt-dlp: {e}")
-        return False
+        print(f"URL {url} extraction failed in validation: {e}")
+        # Even if yt-dlp throws an error (e.g. YouTube bot detection), 
+        # since it matched the regex, we still treat it as a video site 
+        # so it doesn't mistakenly fall back to trafilatura.
+        return True
     
     return False
 
