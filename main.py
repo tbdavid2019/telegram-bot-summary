@@ -488,6 +488,8 @@ def retrieve_video_transcript_from_url(video_url):
                 return audio_transcription(video_url)
             else:
                 return ["該影片沒有可用的字幕，且音頻轉換功能未啟用。"]
+        elif subtitle_content == "error":
+            return ["暫時無法轉錄"]
 
         # 清理字幕內容
         cleaned_content = re.sub(r'WEBVTT\n\n', '', subtitle_content)
@@ -1119,7 +1121,7 @@ async def handle_yt2text(update, context):
     try:
         output_chunks = retrieve_video_transcript_from_url(url)
 
-        if output_chunks and output_chunks[0] in ["該影片沒有可用的字幕。", "無法獲取字幕，且音頻轉換功能未啟用。"]:
+        if output_chunks and output_chunks[0] in ["該影片沒有可用的字幕。", "無法獲取字幕，且音頻轉換功能未啟用。", "暫時無法轉錄"]:
             await context.bot.send_message(chat_id=chat_id, text=output_chunks[0])
             return
 
@@ -1446,6 +1448,39 @@ async def handle(action, update, context):
                 
                 # 正常的摘要流程
                 text_array = process_user_input(user_input)
+                
+                # 檢查是否為已知的錯誤訊息
+                error_msgs = [
+                    "暫時無法轉錄",
+                    "該影片沒有可用的字幕，且音頻轉換功能未啟用。",
+                    "無法獲取字幕或進行音頻轉換。",
+                    "音頻轉錄失敗。",
+                    "無法從 Pocket Casts 頁面提取 RSS feed。",
+                    "無法從 RSS feed 獲取 podcast episodes。",
+                    "處理 Pocket Casts URL 時發生錯誤。",
+                    "無法從 SoundOn 頁面提取 RSS feed。",
+                    "處理 SoundOn URL 時發生錯誤。",
+                    "無法從 Apple Podcast 提取 RSS feed。",
+                    "處理 Apple Podcast URL 時發生錯誤。",
+                    "Podcast 音頻轉錄失敗。"
+                ]
+                
+                # 處理 scrape_text_from_url 返回 tuple 的情況
+                if isinstance(text_array, tuple):
+                    if len(text_array) == 2 and not text_array[0]:
+                        if show_processing and processing_message:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                        await context.bot.send_message(chat_id=chat_id, text=text_array[1])
+                        return
+                    else:
+                        text_array = text_array[0]
+                        
+                if isinstance(text_array, list) and len(text_array) == 1 and text_array[0] in error_msgs:
+                    if show_processing and processing_message:
+                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                    await context.bot.send_message(chat_id=chat_id, text=text_array[0])
+                    return
+
                 if text_array:
                     # 獲取用戶語言偏好和選擇的模型
                     language = context.user_data.get('language', 'zh-TW')
