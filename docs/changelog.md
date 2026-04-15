@@ -1,6 +1,14 @@
 # Changelog
 
-## [2026-04-15] - YouTube Cookie Synchronization Optimization
+## [2026-04-15] - YouTube Anti-Bot Bypass & Cookie Sync Optimization
+
+### 🔧 Fixed (CRITICAL)
+- **YouTube Anti-Bot Bypass ("Sign in to confirm you're not a bot")**: 
+  - Fixed an issue where YouTube blocked download requests even with `cookies.txt` provided. YouTube now strictly enforces JS challenges (PO Token) which plain cookie text files cannot fulfill.
+  - **Resolution**:
+    - Changed `build.sh` to mount the live Chrome profile directory (`/home/bitnami/chrome-data:/chrome-data`) instead of a static `cookies.txt`.
+    - Updated `yt-dlp` configs in `main.py` to use `'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None)` instead of `'cookiefile': './cookies.txt'`.
+    - This allows `yt-dlp` (with the help of `deno`, which was already in the Dockerfile) to solve JavaScript API challenges live by directly reading Chrome's current state.
 
 ### ✨ Added
 - **Docker Volume Mount**: The `telegram-bot-summary` container now mounts `cookies.txt` as a volume. This allows the bot to receive real-time cookie updates from the host without needing to rebuild the image or restart the container.

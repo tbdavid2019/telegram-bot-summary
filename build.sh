@@ -12,7 +12,7 @@ docker run -d \
     --name telegram-bot-summary \
     --restart unless-stopped \
     --env-file .env \
-    -v $(pwd)/cookies.txt:/app/cookies.txt \
+    -v /home/bitnami/chrome-data:/chrome-data \
     telegram-bot-summary
 
 docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest

@@ -371,7 +371,7 @@ def is_supported_by_ytdlp(url):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': './cookies.txt',
+            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
@@ -438,7 +438,7 @@ def extract_video_transcript(video_url):
         'skip_download': True,
         'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
         'outtmpl': '/tmp/%(id)s.%(ext)s',
-        'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
+        'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 添加 cookies.txt 支援
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
         'geo_bypass': True,
@@ -531,7 +531,7 @@ def audio_transcription(video_url):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiefile': './cookies.txt',  # 使用 cookies.txt 檔案
+            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 使用 cookies.txt 檔案
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
@@ -1087,7 +1087,7 @@ async def handle_yt2audio(update, context):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiefile': './cookies.txt',  # 添加 cookies.txt 支援
+            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 添加 cookies.txt 支援
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
@@ -1151,7 +1151,7 @@ def get_video_title(video_url):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': './cookies.txt',
+            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
