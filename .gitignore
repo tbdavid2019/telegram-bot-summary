@@ -9,3 +9,6 @@ __pycache__/
 .DS_Store
 cron.log
 auto_update.log
+__pycache__/
+*.py[cod]
+*.pyo
