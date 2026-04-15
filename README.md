@@ -256,8 +256,19 @@ yt-dlp --cookies-from-browser chrome -F "視頻URL" --skip-download
 
 將產生的 cookies.txt 檔案放入專案根目錄
 
+#### 2. 自動化 Chrome Docker 方案 (推薦)
 
-#### 1. 拉取 Docker 映像
+若您有運行中的 Chrome Docker 容器，可以使用自動化方案定期抓取並同步 cookies：
+
+1. **運行 Chrome 容器**：使用 `linuxserver/chromium` 或類似映像檔。
+2. **自動化指令**：
+   - 確保 `chrome-data` 目錄已掛載。
+   - 使用 `./extract_youtube_cookies.sh` 手動執行提取。
+   - 腳本會自動將 cookies 同步到專案目錄並透過 Docker Volume 即時掛載給 Bot 使用。
+
+詳細變更記錄請參閱 [Changelog](file:///home/bitnami/telegram-bot-summary/docs/changelog.md)。
+
+#### 3. 拉取 Docker 映像
 從 Docker Hub 拉取映像，請執行以下命令：
 ```bash
 docker pull tbdavid2019/telegram-bot-summary:latest

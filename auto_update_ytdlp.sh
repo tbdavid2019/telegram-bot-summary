@@ -69,7 +69,12 @@ if [ "$LATEST_NORM" != "$CURRENT_NORM" ]; then
     docker stop "$CONTAINER_NAME" 2>/dev/null || true
     docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
-    if docker run -d --name "$CONTAINER_NAME" --restart unless-stopped --env-file .env "$CONTAINER_NAME"; then
+    if docker run -d \
+        --name "$CONTAINER_NAME" \
+        --restart unless-stopped \
+        --env-file .env \
+        -v "$DIR/cookies.txt":/app/cookies.txt \
+        "$CONTAINER_NAME"; then
          log "New container started successfully."
     else
          log "Failed to start new container!"
