@@ -199,6 +199,49 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 Telegram bot 可濃縮文字、URL、PDF 和 YouTube 影片的重點摘要。
 
+---
+
+## 🛠 安裝與部署步驟 (Installation)
+
+為了應對 YouTube 最新的防機器人機制 (Sign in to confirm you're not a bot)，這個專案需要配合一個真實的 Chrome Docker 容器來提供即時的 Cookies 與 JS 挑戰解謎。
+
+### 步驟 1: Clone 專案
+```bash
+git clone https://github.com/tbdavid2019/telegram-bot-summary.git
+cd telegram-bot-summary
+```
+
+### 步驟 2: 設定環境變數
+複製範例環境變數檔並填入你的金鑰：
+```bash
+cp example.env .env
+nano .env  # 填入 TELEGRAM_TOKEN, LLM_API_KEY 等必要資訊
+```
+
+### 步驟 3: 啟動 Chrome 輔助容器 (關鍵)
+執行內建的設定腳本，這會啟動一個 Headless Chrome 容器，並綁定資料夾 `/home/bitnami/chrome-data`：
+```bash
+chmod +x setup_chrome_container.sh
+./setup_chrome_container.sh
+```
+
+### 步驟 4: 登入 YouTube 建立真實 Session
+1. Chrome 容器啟動後，它會開啟一個 VNC/WebUI 介面在你的伺服器 Port `3000`。
+2. 打開瀏覽器前往 `http://<你的伺服器IP>:3000`。
+3. 在裡面打開 YouTube 首頁並**登入你的 Google 帳號**。
+4. 隨便點播 1-2 部影片，確定能正常播放（這會讓系統產生足夠的驗證 Token）。
+5. 完成後就可以關閉該 WebUI 網頁。
+
+### 步驟 5: Build 並啟動 Telegram Bot
+執行 `build.sh`，它會自動打包 Bot 並把剛剛 Chrome 的設定檔掛載進 Bot 容器中供 `yt-dlp` 使用：
+```bash
+./build.sh
+```
+
+🎉 **完成！你的 Bot 現在已經可以順利繞過 YouTube 的機器人驗證並生成摘要了！**
+
+---
+
 👉 [telegram 示範機器人 小濃縮](https://t.me/quantaar_bot)
 
 ---
