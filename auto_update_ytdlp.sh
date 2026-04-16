@@ -73,7 +73,7 @@ if [ "$LATEST_NORM" != "$CURRENT_NORM" ]; then
         --name "$CONTAINER_NAME" \
         --restart unless-stopped \
         --env-file .env \
-        -v "$DIR/cookies.txt":/app/cookies.txt \
+        -v /home/bitnami/chrome-data:/chrome-data \
         "$CONTAINER_NAME"; then
          log "New container started successfully."
     else

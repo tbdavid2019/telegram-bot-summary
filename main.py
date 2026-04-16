@@ -1279,7 +1279,7 @@ async def handle(action, update, context):
     try:
         if action == 'start':
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="Oli 333 - Summary Bot。v20260117。可以幫您自動總結為繁體中文或英文的內容。")
+                                                text="Oli 333 - Summary Bot。v20260416。可以幫您自動總結為繁體中文或英文的內容。")
         elif action == 'help':
             help_text = """
    I can summarize text, URLs, PDFs, video and podcast content for you. 
