@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-04-16] - Auto-Update Script Fix & Cookie Mount Cleanup
+
+### 🔧 Fixed (CRITICAL)
+- **Auto-Update Consistency**: Fixed an issue where the `auto_update_ytdlp.sh` script was overriding the Docker volume mounts and mapping an incorrect `cookies.txt` file instead of the actual Chrome data folder. This caused `yt-dlp` to fail reading cookies after a successful container rebuild.
+  - **Resolution**: Updated `auto_update_ytdlp.sh` to mirror `build.sh` exactly, ensuring it mounts `-v /home/bitnami/chrome-data:/chrome-data` during the container start.
+
+### 🧹 Removed
+- **Redundant Cron Jobs**: Removed the `extract_youtube_cookies.sh` cron job, which was unnecessary since `yt-dlp` now directly reads the active browser profile from `/chrome-data` instead of a static `cookies.txt` file.
+
 ## [2026-04-15] - YouTube Anti-Bot Bypass & Cookie Sync Optimization
 
 ### 🔧 Fixed (CRITICAL)
