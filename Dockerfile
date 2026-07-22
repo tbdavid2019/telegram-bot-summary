@@ -28,6 +28,7 @@ WORKDIR /app
 
 # 複製應用程式碼到容器
 COPY main.py .
+COPY api.py .
 # 複製 cookies 文件到容器
 COPY cookies.txt .
 
@@ -36,4 +37,7 @@ ENV PATH="/usr/bin:${PATH}"
 
 ENV PYTHONUNBUFFERED=1
 
+EXPOSE 8001
+
 ENTRYPOINT ["python3", "-u", "main.py"]
+

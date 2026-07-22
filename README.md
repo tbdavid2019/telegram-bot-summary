@@ -400,17 +400,52 @@ SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_email_password
 SMTP_CC_EMAILS=cc1@gmail.com,cc2@gmail.com
 
-# 啟用郵件發送功能 (1 啟用，0 禁用)
-ENABLE_EMAIL=1
+# Web API 配置 (用於 LLM / 外部系統 API 存取)
+API_AUTH_TOKENS=your_api_token_1,your_api_token_2
+API_PORT=8001
 
-### 📅 最新更新 (2025-01-17)
+---
 
-#### 1. YouTube 403 Forbidden 修正 (Deno 整合) 🛠️
-- **問題**: `yt-dlp` 近期遭遇 YouTube 對 `m3u8` 流的 403 Forbidden 封鎖，主要原因是無法正確解析新的 JS 簽名挑戰。
-- **解決方案**: 
-  - 集成 **Deno** 至 Docker 容器中，作為 `yt-dlp` 的 JavaScript runtime。
-  - 優化 `yt-dlp` 配置，移除可能導致問題的複雜參數，回歸穩定的 `default,-web_safari` 客戶端模擬。
-- **效果**: 成功解決下載失敗問題，並保持對各種格式的兼容性。
+## 🌐 Web API 服務與 LLM Skill 整合
 
-#### 2. 配置簡化
-- 回歸最穩定的 `yt-dlp` 參數，讓其自動依賴 Deno 解決核心問題，而非依賴不隱定的 HTTP 協議過濾。
+本專案除了提供 Telegram Bot 介面外，亦內建了高效率的 **FastAPI Web 服務**，能讓任何外部 LLM（如 Custom GPTs、Claude Projects、LangChain / LlamaIndex 代理）或第三方應用系統直接經由 HTTP POST 取得結構化的 Markdown 摘要。
+
+### 1. 環境變數設定 (`.env`)
+
+在 `.env` 中加入以下設定即可啟用或配置 API 存取：
+
+| 環境變數 | 說明 | 預設值 / 範例 |
+| --- | --- | --- |
+| `API_AUTH_TOKENS` | API 金鑰驗證清單（多組請用逗號分隔） | `token1,token2,token3` |
+| `API_PORT` | Web API 服務監聽埠 | `8001` |
+
+> 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時於容器 Log 中動態產生一組隨機的安全 Token。*
+
+### 2. API 端點規格
+
+#### 外部端點 (Default Port: `8001`)
+
+* **`GET /health`**：健康檢查
+* **`POST /api/v1/summarize`**：發送摘要請求
+  * **Header**: `Authorization: Bearer <API_AUTH_TOKEN>`
+  * **Body (JSON)**:
+    ```json
+    {
+      "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "language": "zh-TW"
+    }
+    ```
+  * **Response (JSON)**:
+    ```json
+    {
+      "status": "success",
+      "title": "影片標題或網頁標題",
+      "original_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "summary": "# ⓵ 【容易懂 Easy Know】\n..."
+    }
+    ```
+
+### 3. LLM 介接 (SKILL.md)
+
+專案根目錄下附有專門為 LLM 說明的指令檔 [`SKILL.md`](file:///home/bitnami/telegram-bot-summary/SKILL.md)，包含完整請求格式與 **OpenAPI 3.0 YAML** 規格，可直接匯入 OpenAI Custom GPTs Actions 或 Prompt 系統。
+

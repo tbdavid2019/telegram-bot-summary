@@ -13,6 +13,7 @@ docker run -d \
     --restart unless-stopped \
     --env-file .env \
     -v /home/bitnami/chrome-data:/chrome-data \
+    -p 8001:8001 \
     telegram-bot-summary
 
 docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest

@@ -74,6 +74,7 @@ if [ "$LATEST_NORM" != "$CURRENT_NORM" ]; then
         --restart unless-stopped \
         --env-file .env \
         -v /home/bitnami/chrome-data:/chrome-data \
+        -p 8001:8001 \
         "$CONTAINER_NAME"; then
          log "New container started successfully."
     else

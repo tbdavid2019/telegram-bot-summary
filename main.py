@@ -17,6 +17,8 @@ from pymongo import MongoClient
 from datetime import datetime
 import feedparser
 import markdown
+import asyncio
+import uvicorn
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -1677,7 +1679,7 @@ async def handle(action, update, context):
             await context.bot.send_message(chat_id=chat_id, text="發生錯誤，請稍後再試。")
         print(f"Error: {e}")
 
-def main():
+async def main():
     try:
         application = ApplicationBuilder().token(telegram_token).build()
         start_handler = CommandHandler('start', handle_start)
@@ -1709,9 +1711,32 @@ def main():
         application.add_handler(yt2text_handler)
         application.add_handler(summarize_handler)
         application.add_handler(button_click_handler)
-        application.run_polling()
+
+        # 1. Initialize and start the Telegram Bot application in polling mode
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        print("🤖 Telegram Bot initialized and polling started.")
+
+        # 2. Configure and start Uvicorn (FastAPI) web server
+        api_port = int(os.environ.get("API_PORT", "8001"))
+        from api import app
+        config = uvicorn.Config(app, host="0.0.0.0", port=api_port, log_level="info")
+        server = uvicorn.Server(config)
+        
+        print(f"🌐 FastAPI Web API starting on port {api_port}...")
+        
+        try:
+            await server.serve()
+        finally:
+            print("Shutting down Telegram Bot...")
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+            print("👋 Telegram Bot stopped and resource cleanup completed.")
+
     except Exception as e:
-        print(e)
+        print(f"Error during application startup: {e}")
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

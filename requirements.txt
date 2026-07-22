@@ -28,3 +28,6 @@ lxml
 pymongo
 feedparser
 markdown==3.7
+fastapi
+uvicorn
+

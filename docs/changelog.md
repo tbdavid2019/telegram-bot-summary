@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-07-21] - Expose Authenticated Web API & LLM Integration (Option B)
+
+### ✨ Added
+- **FastAPI Web App (`api.py`)**: Built an API service enabling programmatic content summary (YouTube videos, podcasts, web links, or raw text) via HTTP POST.
+- **Multiple Token Auth (`API_AUTH_TOKENS`)**: Secured API endpoints with Bearer Token validation, supporting multiple comma-separated keys. Employs dynamic fallback token generation if unconfigured.
+- **LLM Skill Definition (`SKILL.md`)**: Documented the API usage instructions, JSON schemas, and an OpenAPI 3.0 specification for seamless integration with other LLMs or Custom GPTs.
+
+### 🚀 Improved
+- **Unified Process Execution (Option B)**: Configured python-telegram-bot's asynchronous event loop to run side-by-side with FastAPI's Uvicorn server in a single container.
+- **Exposed API Port**: Modified `Dockerfile`, `build.sh`, and `auto_update_ytdlp.sh` to expose and map container port `8001` to the host.
+
 ## [2026-04-16] - Auto-Update Script Fix & Cookie Mount Cleanup
 
 ### 🔧 Fixed (CRITICAL)
