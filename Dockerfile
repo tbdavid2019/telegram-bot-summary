@@ -26,10 +26,8 @@ RUN python3 -c "import yt_dlp"
 
 WORKDIR /app
 
-# 複製應用程式碼到容器
-COPY main.py .
-COPY api.py .
-COPY runtime.py .
+# 複製應用程式 package 到容器
+COPY app /app/app
 # 複製 cookies 文件到容器
 COPY cookies.txt .
 
@@ -40,4 +38,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8001
 
-ENTRYPOINT ["python3", "-u", "main.py"]
+ENTRYPOINT ["python3", "-u", "-m", "app.main"]

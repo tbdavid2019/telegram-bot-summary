@@ -5,9 +5,18 @@
 # docker build --no-cache -t telegram-bot-summary . && docker stop telegram-bot-summary && docker rm telegram-bot-summary && docker run -d --name telegram-bot-summary --restart unless-stopped --env-file .env telegram-bot-summary
 
 
-docker build --no-cache  -t telegram-bot-summary .
-docker stop telegram-bot-summary
-docker rm telegram-bot-summary
+#!/usr/bin/env sh
+set -eu
+
+docker build --no-cache -t telegram-bot-summary .
+
+if [ "${DEPLOY_CONFIRM:-0}" != "1" ]; then
+    echo "Image built. To replace the running container, run: DEPLOY_CONFIRM=1 ./build.sh"
+    exit 0
+fi
+
+docker stop telegram-bot-summary 2>/dev/null || true
+docker rm telegram-bot-summary 2>/dev/null || true
 docker run -d \
     --name telegram-bot-summary \
     --restart unless-stopped \

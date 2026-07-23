@@ -19,7 +19,7 @@ import feedparser
 import markdown
 import asyncio
 import uvicorn
-from runtime import run_blocking
+from app.runtime import run_blocking
 from app.services.content import is_url, split_user_input
 
 import smtplib
@@ -1737,7 +1737,7 @@ async def main():
 
         # 2. Configure and start Uvicorn (FastAPI) web server
         api_port = int(os.environ.get("API_PORT", "8001"))
-        from api import app
+        from app.api import app
         config = uvicorn.Config(app, host="0.0.0.0", port=api_port, log_level="info")
         server = uvicorn.Server(config)
         
