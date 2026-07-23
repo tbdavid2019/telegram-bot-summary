@@ -17,13 +17,20 @@ fi
 
 docker stop telegram-bot-summary 2>/dev/null || true
 docker rm telegram-bot-summary 2>/dev/null || true
-docker run -d \
+
+set -- docker run -d \
     --name telegram-bot-summary \
     --restart unless-stopped \
-    --env-file .env \
-    -v /home/bitnami/chrome-data:/chrome-data \
-    -p 8001:8001 \
-    telegram-bot-summary
+    --env-file .env
+
+if [ -n "${CHROME_DATA_DIR:-}" ]; then
+    set -- "$@" -v "$CHROME_DATA_DIR:/chrome-data"
+elif [ -d /home/bitnami/chrome-data ]; then
+    set -- "$@" -v /home/bitnami/chrome-data:/chrome-data
+fi
+
+set -- "$@" -p 8001:8001 telegram-bot-summary
+"$@"
 
 docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest
 docker push tbdavid2019/telegram-bot-summary:latest
