@@ -35,8 +35,10 @@ enable_email = int(os.environ.get("ENABLE_EMAIL", 0))  # 控制是否啟用發�
 # discord 設定
 discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
 enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默認為 0（不啟用）
-HTTP_TIMEOUT_SECONDS = float(os.environ.get("HTTP_TIMEOUT_SECONDS", "60"))
-SUBPROCESS_TIMEOUT_SECONDS = float(os.environ.get("SUBPROCESS_TIMEOUT_SECONDS", "120"))
+WEB_REQUEST_TIMEOUT_SECONDS = float(os.environ.get("WEB_REQUEST_TIMEOUT_SECONDS", os.environ.get("HTTP_TIMEOUT_SECONDS", "60")))
+LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "180"))
+ASR_TIMEOUT_SECONDS = float(os.environ.get("ASR_TIMEOUT_SECONDS", os.environ.get("SUBPROCESS_TIMEOUT_SECONDS", "600")))
+MEDIA_DOWNLOAD_TIMEOUT_SECONDS = float(os.environ.get("MEDIA_DOWNLOAD_TIMEOUT_SECONDS", "900"))
 MONGO_TIMEOUT_MS = int(os.environ.get("MONGO_TIMEOUT_MS", "5000"))
 
 
@@ -61,7 +63,7 @@ def send_to_discord(content):
         if len(content) <= max_length:
             # 內容不長，直接發送文字訊息
             data = {"content": content}
-            response = requests.post(discord_webhook_url, json=data, timeout=HTTP_TIMEOUT_SECONDS)
+            response = requests.post(discord_webhook_url, json=data, timeout=WEB_REQUEST_TIMEOUT_SECONDS)
             response.raise_for_status()
             print("Message sent to Discord successfully.")
         else:
@@ -81,7 +83,7 @@ def send_to_discord(content):
                     'content': '📄 摘要內容過長，已上傳為文件'
                 }
                 
-                response = requests.post(discord_webhook_url, data=data, files=files, timeout=HTTP_TIMEOUT_SECONDS)
+                response = requests.post(discord_webhook_url, data=data, files=files, timeout=WEB_REQUEST_TIMEOUT_SECONDS)
                 response.raise_for_status()
             
             # 刪除臨時文件
@@ -124,7 +126,7 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
         message.attach(MIMEText(html_summary, "html", "utf-8"))
 
         # 發送郵件
-        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=HTTP_TIMEOUT_SECONDS) as server:
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=WEB_REQUEST_TIMEOUT_SECONDS) as server:
             server.login(smtp_user, smtp_password)
             server.sendmail(
                 smtp_user,
@@ -397,6 +399,7 @@ def is_supported_by_ytdlp(url):
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
+            'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -464,6 +467,7 @@ def extract_video_transcript(video_url):
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
         'geo_bypass': True,
+        'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
     }
 
     try:
@@ -557,6 +561,7 @@ def audio_transcription(video_url):
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
+            'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -583,7 +588,7 @@ def audio_transcription(video_url):
                 "-F", "model=whisper-large-v3"
             ]
 
-            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=ASR_TIMEOUT_SECONDS)
 
             try:
                 response_json = json.loads(result.stdout)
@@ -830,7 +835,7 @@ def download_and_transcribe_podcast(audio_url):
         
         # 下載音頻文件
         temp_audio_path = f"/tmp/{str(uuid.uuid4())}.mp3"
-        response = requests.get(audio_url, stream=True, timeout=300)
+        response = requests.get(audio_url, stream=True, timeout=MEDIA_DOWNLOAD_TIMEOUT_SECONDS)
         response.raise_for_status()
         
         with open(temp_audio_path, 'wb') as f:
@@ -865,7 +870,7 @@ def download_and_transcribe_podcast(audio_url):
                 "-F", "model=whisper-large-v3"
             ]
             
-            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=ASR_TIMEOUT_SECONDS)
             
             try:
                 response_json = json.loads(result.stdout)
@@ -1006,7 +1011,7 @@ def call_gpt_api(prompt, additional_messages=[], use_llm2_model=False, selected_
     }
 
     try:
-        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data, timeout=HTTP_TIMEOUT_SECONDS)
+        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data, timeout=LLM_TIMEOUT_SECONDS)
         response.raise_for_status()  # 如果返回非 200 的狀態碼會拋出異常
         message = response.json()["choices"][0]["message"]["content"].strip()
         return message
@@ -1100,6 +1105,7 @@ def download_video_audio(url):
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
         'geo_bypass': True,
+        'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
@@ -1175,6 +1181,7 @@ def get_video_title(video_url):
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
+            'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

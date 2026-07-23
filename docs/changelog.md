@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-07-23] - Long Media Timeout Controls & Non-Blocking Summary Processing
+
+### 🚀 Improved
+- **Long YouTube/Podcast Processing**: Split external time limits by operation so long media work is not constrained by the short general network timeout.
+  - `LLM_TIMEOUT_SECONDS=180` for a single summary or follow-up request.
+  - `ASR_TIMEOUT_SECONDS=600` for each Whisper audio chunk.
+  - `MEDIA_DOWNLOAD_TIMEOUT_SECONDS=900` for media downloads.
+  - `WEB_REQUEST_TIMEOUT_SECONDS=60` for webhooks and SMTP.
+- **Backward Compatibility**: Existing `HTTP_TIMEOUT_SECONDS` and `SUBPROCESS_TIMEOUT_SECONDS` values remain accepted as fallbacks for the renamed general-web and ASR settings.
+
+### 🔧 Fixed
+- **Event-loop Blocking**: Moved synchronous extraction, yt-dlp audio download, ASR, LLM, file conversion, MongoDB persistence, email, and Discord delivery off the Telegram/FastAPI event loop.
+- **Optional MongoDB**: Leaving `MONGO_URI` empty now disables persistence instead of attempting a default MongoDB connection.
+- **Docker Runtime Helper**: Added `runtime.py` to the container image so the application starts successfully after the non-blocking runtime update.
+
 ## [2026-07-21] - Expose Authenticated Web API & LLM Integration (Option B)
 
 ### ✨ Added

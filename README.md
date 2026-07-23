@@ -418,8 +418,10 @@ API_PORT=8001
 | --- | --- | --- |
 | `API_AUTH_TOKENS` | API 金鑰驗證清單（多組請用逗號分隔） | `token1,token2,token3` |
 | `API_PORT` | Web API 服務監聽埠 | `8001` |
-| `HTTP_TIMEOUT_SECONDS` | LLM、Webhook、SMTP 等外部服務的最長等待秒數 | `60` |
-| `SUBPROCESS_TIMEOUT_SECONDS` | Whisper `curl` 轉錄程序的最長等待秒數 | `120` |
+| `WEB_REQUEST_TIMEOUT_SECONDS` | Webhook、SMTP 等一般外部服務的最長等待秒數 | `60` |
+| `LLM_TIMEOUT_SECONDS` | 單次 LLM 摘要/問答呼叫的最長等待秒數 | `180` |
+| `ASR_TIMEOUT_SECONDS` | 每段 Whisper ASR 轉錄的最長等待秒數 | `600` |
+| `MEDIA_DOWNLOAD_TIMEOUT_SECONDS` | Podcast/影片音訊下載的最長等待秒數 | `900` |
 | `MONGO_TIMEOUT_MS` | MongoDB 連線逾時毫秒數 | `5000` |
 
 > 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時於容器 Log 中動態產生一組隨機的安全 Token。*
