@@ -19,6 +19,7 @@ import feedparser
 import markdown
 import asyncio
 import uvicorn
+from runtime import run_blocking
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -34,6 +35,9 @@ enable_email = int(os.environ.get("ENABLE_EMAIL", 0))  # 控制是否啟用發�
 # discord 設定
 discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
 enable_discord_webhook = int(os.environ.get("ENABLE_DISCORD_WEBHOOK", 0)) # 默認為 0（不啟用）
+HTTP_TIMEOUT_SECONDS = float(os.environ.get("HTTP_TIMEOUT_SECONDS", "60"))
+SUBPROCESS_TIMEOUT_SECONDS = float(os.environ.get("SUBPROCESS_TIMEOUT_SECONDS", "120"))
+MONGO_TIMEOUT_MS = int(os.environ.get("MONGO_TIMEOUT_MS", "5000"))
 
 
 
@@ -57,7 +61,7 @@ def send_to_discord(content):
         if len(content) <= max_length:
             # 內容不長，直接發送文字訊息
             data = {"content": content}
-            response = requests.post(discord_webhook_url, json=data)
+            response = requests.post(discord_webhook_url, json=data, timeout=HTTP_TIMEOUT_SECONDS)
             response.raise_for_status()
             print("Message sent to Discord successfully.")
         else:
@@ -77,7 +81,7 @@ def send_to_discord(content):
                     'content': '📄 摘要內容過長，已上傳為文件'
                 }
                 
-                response = requests.post(discord_webhook_url, data=data, files=files)
+                response = requests.post(discord_webhook_url, data=data, files=files, timeout=HTTP_TIMEOUT_SECONDS)
                 response.raise_for_status()
             
             # 刪除臨時文件
@@ -120,7 +124,7 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
         message.attach(MIMEText(html_summary, "html", "utf-8"))
 
         # 發送郵件
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=HTTP_TIMEOUT_SECONDS) as server:
             server.login(smtp_user, smtp_password)
             server.sendmail(
                 smtp_user,
@@ -170,9 +174,25 @@ ANSWER_BOOK_API = os.environ.get("ANSWER_BOOK_API", "http://answerbook.david888.
 
 # 添加 mongodb 紀錄功能
 mongo_uri = os.environ.get("MONGO_URI", "")
-mongo_client = MongoClient(mongo_uri)
-db = mongo_client["bot_database"]
-summary_collection = db["summaries"]
+mongo_client = None
+summary_collection = None
+if mongo_uri:
+    mongo_client = MongoClient(
+        mongo_uri,
+        serverSelectionTimeoutMS=MONGO_TIMEOUT_MS,
+        connectTimeoutMS=MONGO_TIMEOUT_MS,
+    )
+    summary_collection = mongo_client["bot_database"]["summaries"]
+
+
+def save_summary(summary_data):
+    """Persist a summary when MongoDB is configured, without affecting delivery."""
+    if summary_collection is None:
+        return
+    try:
+        summary_collection.insert_one(summary_data)
+    except Exception as e:
+        print(f"Failed to save summary to MongoDB: {e}")
 
 # 語言配置
 SUPPORTED_LANGUAGES = {
@@ -563,7 +583,7 @@ def audio_transcription(video_url):
                 "-F", "model=whisper-large-v3"
             ]
 
-            result = subprocess.run(curl_command, capture_output=True, text=True)
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
 
             try:
                 response_json = json.loads(result.stdout)
@@ -845,7 +865,7 @@ def download_and_transcribe_podcast(audio_url):
                 "-F", "model=whisper-large-v3"
             ]
             
-            result = subprocess.run(curl_command, capture_output=True, text=True)
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
             
             try:
                 response_json = json.loads(result.stdout)
@@ -986,7 +1006,7 @@ def call_gpt_api(prompt, additional_messages=[], use_llm2_model=False, selected_
     }
 
     try:
-        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data)
+        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()  # 如果返回非 200 的狀態碼會拋出異常
         message = response.json()["choices"][0]["message"]["content"].strip()
         return message
@@ -1063,6 +1083,29 @@ async def handle_button_click(update, context):
     
     # 其他按鈕處理可以在這裡添加
 
+def download_video_audio(url):
+    """Download and convert audio synchronously; callers must offload this work."""
+    temp_uuid = str(uuid.uuid4())
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'/tmp/{temp_uuid}.%(ext)s',
+        'ffmpeg_location': '/usr/bin/ffmpeg',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'ffprobe_location': '/usr/bin/ffprobe',
+        'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
+        'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
+        'force_ipv4': True,
+        'geo_bypass': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.extract_info(url, download=True)
+    return f'/tmp/{temp_uuid}.mp3'
+
+
 async def handle_yt2audio(update, context):
     chat_id = update.effective_chat.id
     user_input = update.message.text.split()
@@ -1074,32 +1117,7 @@ async def handle_yt2audio(update, context):
     url = user_input[1]  # 取得影片 URL
 
     try:
-        # 生成唯一文件名稱
-        temp_uuid = str(uuid.uuid4())
-        output_template = f"/tmp/{temp_uuid}.%(ext)s"
-
-        # 使用 yt-dlp 下載音頻
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_template,  # 直接使用這個模板來生成文件名
-            'ffmpeg_location': '/usr/bin/ffmpeg',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 添加 cookies.txt 支援
-            'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
-            'force_ipv4': True,
-            'geo_bypass': True,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)  # 下載音頻
-
-        # 確保獲取到的 mp3 文件名正確
-        output_path = f"/tmp/{temp_uuid}.mp3"
+        output_path = await run_blocking(download_video_audio, url)
 
         # 傳送音頻檔案給 Telegram user
         with open(output_path, 'rb') as audio:
@@ -1124,7 +1142,7 @@ async def handle_yt2text(update, context):
     url = user_input[1]
 
     try:
-        output_chunks = retrieve_video_transcript_from_url(url)
+        output_chunks = await run_blocking(retrieve_video_transcript_from_url, url)
 
         if output_chunks and output_chunks[0] in ["該影片沒有可用的字幕。", "無法獲取字幕，且音頻轉換功能未啟用。", "暫時無法轉錄"]:
             await context.bot.send_message(chat_id=chat_id, text=output_chunks[0])
@@ -1438,7 +1456,7 @@ async def handle(action, update, context):
                     
                     # 呼叫 API (使用用戶選擇的模型)
                     selected_model = context.user_data.get('selected_model', None)
-                    answer = call_gpt_api(user_input, messages[:-1], selected_model=selected_model)  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
+                    answer = await run_blocking(call_gpt_api, user_input, messages[:-1], selected_model=selected_model)  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
                     
                     # 保存對話歷史
                     history['messages'].append({"role": "user", "content": user_input})
@@ -1452,7 +1470,7 @@ async def handle(action, update, context):
                     return
                 
                 # 正常的摘要流程
-                text_array = process_user_input(user_input)
+                text_array = await run_blocking(process_user_input, user_input)
                 
                 # 檢查是否為已知的錯誤訊息
                 error_msgs = [
@@ -1491,10 +1509,10 @@ async def handle(action, update, context):
                     language = context.user_data.get('language', 'zh-TW')
                     selected_model = context.user_data.get('selected_model', None)
                     
-                    summary = summarize(text_array, language=language, selected_model=selected_model)
+                    summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
                     if is_url(user_input):
                         original_url = user_input
-                        title = get_web_title(user_input)
+                        title = await run_blocking(get_web_title, user_input)
                         summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
                     else:
                         original_url = None
@@ -1517,7 +1535,7 @@ async def handle(action, update, context):
                         # 新增：將摘要寄送到指定郵箱
                         # 注意：需要一個主要收件人，而不僅是抄送列表
                         if smtp_user:  # 使用發件人地址作為主要收件人
-                            send_summary_via_email(summary_with_original, smtp_user, subject=title)
+                            await run_blocking(send_summary_via_email, summary_with_original, smtp_user, subject=title)
                         else:
                             print("無法發送郵件：缺少主要收件人地址")
                     
@@ -1530,7 +1548,7 @@ async def handle(action, update, context):
                         "language": language,  # 新增
                         "timestamp": datetime.now()
                     }
-                    summary_collection.insert_one(summary_data)
+                    await run_blocking(save_summary, summary_data)
                     
                     if show_processing and processing_message:
                         await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
@@ -1538,7 +1556,7 @@ async def handle(action, update, context):
                     # 發送摘要到 Discord Webhook（如果啟用）
                     if enable_discord_webhook:
                         discord_message = f"🔔 新的摘要已生成：\n{summary_with_original}"
-                        send_to_discord(discord_message)
+                        await run_blocking(send_to_discord, discord_message)
                     
                     # 處理長消息，將 Markdown 轉換成 Telegram 支援的 HTML
                     formatted_summary = format_for_telegram(summary_with_original)
@@ -1612,7 +1630,7 @@ async def handle(action, update, context):
                     md = MarkItDown()
                 print("[DEBUG] 開始 markitdown 轉換")
                 try:
-                    result = md.convert(file_path)
+                    result = await run_blocking(md.convert, file_path)
                     text = result.text_content
                     print(f"[DEBUG] markitdown 轉換完成，text 長度={len(text)}")
                 except Exception as e:
@@ -1635,7 +1653,7 @@ async def handle(action, update, context):
                 print(f"[DEBUG] 開始對整個文本進行摘要，文本長度: {len(text)} 字符")
                 language = context.user_data.get('language', 'zh-TW')
                 selected_model = context.user_data.get('selected_model', None)
-                summary = summarize([text], language=language, selected_model=selected_model)
+                summary = await run_blocking(summarize, [text], language=language, selected_model=selected_model)
 
                 # 轉義 Markdown 特殊字符
                 escaped_summary = escape_markdown(summary, version=2)
@@ -1650,7 +1668,7 @@ async def handle(action, update, context):
                 # 發送 PDF 摘要到 Discord Webhook（如果啟用）
                 if enable_discord_webhook:
                     discord_message = f"🔔 已成功處理一份 PDF 文件，摘要內容如下：\n{summary}"
-                    send_to_discord(discord_message)
+                    await run_blocking(send_to_discord, discord_message)
 
                 # 分批發送摘要
                 if len(summary) > 4000:

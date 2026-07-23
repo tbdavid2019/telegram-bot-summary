@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
+from runtime import run_blocking
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)
@@ -69,7 +70,7 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
     
     try:
         # 1. Process the input (fetch website, get youtube transcript, or split text)
-        text_array = process_user_input(user_input)
+        text_array = await run_blocking(process_user_input, user_input)
         
         # Check if returned error message array
         error_msgs = [
@@ -110,12 +111,12 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
             )
             
         # 2. Summarize the text array
-        summary = summarize(text_array, language=language, selected_model=selected_model)
+        summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
         
         # 3. Determine title and original url
         if is_url(user_input):
             original_url = user_input
-            title = get_web_title(user_input)
+            title = await run_blocking(get_web_title, user_input)
         else:
             original_url = None
             title = "Text Summary"

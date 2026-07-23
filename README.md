@@ -418,8 +418,13 @@ API_PORT=8001
 | --- | --- | --- |
 | `API_AUTH_TOKENS` | API 金鑰驗證清單（多組請用逗號分隔） | `token1,token2,token3` |
 | `API_PORT` | Web API 服務監聽埠 | `8001` |
+| `HTTP_TIMEOUT_SECONDS` | LLM、Webhook、SMTP 等外部服務的最長等待秒數 | `60` |
+| `SUBPROCESS_TIMEOUT_SECONDS` | Whisper `curl` 轉錄程序的最長等待秒數 | `120` |
+| `MONGO_TIMEOUT_MS` | MongoDB 連線逾時毫秒數 | `5000` |
 
 > 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時於容器 Log 中動態產生一組隨機的安全 Token。*
+
+> 💡 *若 `MONGO_URI` 留空，Bot 會略過摘要儲存，仍會正常回覆 Telegram 與 API 請求。*
 
 ### 2. API 端點規格
 
@@ -448,4 +453,3 @@ API_PORT=8001
 ### 3. LLM 介接 (SKILL.md)
 
 專案根目錄下附有專門為 LLM 說明的指令檔 [`SKILL.md`](file:///home/bitnami/telegram-bot-summary/SKILL.md)，包含完整請求格式與 **OpenAPI 3.0 YAML** 規格，可直接匯入 OpenAI Custom GPTs Actions 或 Prompt 系統。
-
