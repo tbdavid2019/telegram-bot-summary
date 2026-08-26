@@ -1,4 +1,4 @@
-FROM python:3.13.3-slim
+FROM python:3.12-slim
 #FROM debian:11-slim
 
 # 安裝必要的工具和依賴，包括 Python 3、ffmpeg 和 curl
