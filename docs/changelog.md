@@ -1,20 +1,26 @@
 # Changelog
 
-## [2026-08-26] - Tarot Reading (/tarot) & Moon Old Man Yinyuan Divination (/yiyu)
+## [2026-08-26] - AnyDoc Document Engine & Tarot / Yinyuan Divination
+
+### 🔄 Changed & Improved
+- **AnyDoc 高效能文件解析引擎 (取代 MarkItDown)**:
+  - 拔除並徹底移除 `markitdown[all]` 依賴。
+  - 改用 Firecrawl 推出的 Rust 高效能文件解析庫 **`firecrawl-anydoc`** (`anydoc`)。
+  - 大幅提升文件轉換速度（毫秒級），並支援 PDF、Word (.docx)、PowerPoint (.pptx)、Excel (.xlsx)、EPUB、RTF、CSV 及純文字等多種格式轉換為乾淨的 Markdown 進行 LLM 摘要。
+  - 封裝為 `convert_document_to_markdown` 於 `app/services/content.py`，具備文字自動 fallback 機制與非同步線程保護。
 
 ### ✨ Added
-- **Tarot Reading (`/tarot`)**:
-  - Direct integration with `POST /api/tarot-question` on `qi.david888.com`.
-  - Supports spreads: `single`, `three` (default), `diamond`, `moon`, `horseshoe`, `celtic` and Chinese aliases.
-  - Formatted response showing spread name, drawn cards (upright/reversed, Major Arcana tags), and AI in-depth guidance.
-- **Yinyuan & Zodiac Compatibility (`/yiyu`, `/yinyuan`)**:
-  - Direct integration with `POST /api/yinyuan-question` on `qi.david888.com`.
-  - Supports default Moon Old Man fortune stick mode (`fortune`) and Zodiac match mode (`zodiac`).
-  - Formatted response showing fortune stick poem or Zodiac matching score and AI relationship advice.
-- **Divination Service Module (`app/services/divination.py`)**:
-  - Isolated parameter parsing, endpoint invocation with non-blocking execution, error handling, and message chunking for long texts.
-- **Demonstration & Help Guides**:
-  - Comprehensive usage examples for `/tarot` and `/yiyu` when invoked without arguments or via `/help`.
+- **塔羅占卜 (`/tarot`)**:
+  - 串接 `qi.david888.com` 之 `POST /api/tarot-question`。
+  - 支援 `single`（單張）、`three`（三張牌，預設）、`diamond`（鑽石）、`moon`（月亮）、`horseshoe`（馬蹄鐵）、`celtic`（塞爾特十字）牌陣與中文別名。
+  - 輸出格式包含牌陣名稱、抽得牌組（正逆位、大阿爾克那標記）與 AI 深度解牌建議。
+- **月老姻緣與生肖合婚 (`/yiyu`, `/yinyuan`)**:
+  - 串接 `qi.david888.com` 之 `POST /api/yinyuan-question`。
+  - 預設月老姻緣籤（`fortune`）問答，並支援生肖合婚模式（`zodiac`）。
+  - 輸出籤詩詩句或生肖契合度指數，並由 AI 提供感情相處與合婚指引。
+- **指令示範與說明**:
+  - 用戶輸入 `/tarot` 或 `/yiyu` 未帶參數時，自動顯示清楚的操作格式與示範範例。
+  - 同步更新 Telegram 選單指令列表 (`set_my_commands`) 與 `/help`。
 
 ## [2026-07-23] - Long Media Timeout Controls & Non-Blocking Summary Processing
 
