@@ -8,7 +8,6 @@ import trafilatura
 import uuid
 import requests
 from openai import OpenAI
-from markitdown import MarkItDown
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters, ApplicationBuilder
 from bs4 import BeautifulSoup
@@ -20,7 +19,17 @@ import markdown
 import asyncio
 import uvicorn
 from app.runtime import run_blocking
-from app.services.content import is_url, split_user_input
+from app.services.content import is_url, split_user_input, convert_document_to_markdown
+from app.services.divination import (
+    parse_tarot_command,
+    parse_yinyuan_command,
+    ask_tarot_api,
+    ask_yinyuan_api,
+    format_tarot_reply,
+    format_yinyuan_reply,
+    TAROT_HELP_TEXT,
+    YINYUAN_HELP_TEXT,
+)
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -1030,6 +1039,18 @@ async def handle_boa(update, context):
     """取回解答之書的回答"""
     return await handle('boa', update, context)
 
+async def handle_tarot(update, context):
+    """處理塔羅占卜命令"""
+    return await handle('tarot', update, context)
+
+async def handle_yiyu(update, context):
+    """處理月老姻緣與生肖合婚命令 (精簡指令)"""
+    return await handle('yiyu', update, context)
+
+async def handle_yinyuan(update, context):
+    """處理月老姻緣與生肖合婚命令"""
+    return await handle('yinyuan', update, context)
+
 async def handle_language(update, context):
     """處理語言切換命令"""
     return await handle('language', update, context)
@@ -1270,6 +1291,8 @@ def set_my_commands(telegram_token):
         {"command": "lang", "description": "切換語言 Switch language"},
         {"command": "model", "description": "切換/列出模型 Switch/List models"},
         {"command": "boa", "description": "解答之書 Book of Answers"},
+        {"command": "tarot", "description": "塔羅占卜 Tarot reading"},
+        {"command": "yiyu", "description": "月老姻緣 / 生肖合婚"},
         {"command": "context", "description": "顯示對話上下文 Show context"},
         {"command": "clear", "description": "清除對話歷史 Clear history"},
         {"command": "yt2audio", "description": "下載影片音頻（支援 YouTube、Vimeo、Bilibili 等）"},
@@ -1311,6 +1334,8 @@ async def handle(action, update, context):
      /lang - Switch language (切換語言)
      /model - Switch/List LLM models (切換/列出模型)
      /boa - Book of Answers 解答之書
+     /tarot [牌陣] [問題] - 塔羅占卜與 AI 深度解牌
+     /yiyu [模式] [問題] - 月老姻緣籤 / 生肖合婚指引
      /context - Show current context (顯示對話上下文)
      /clear - Clear conversation history (清除對話歷史)
      /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
@@ -1423,6 +1448,99 @@ async def handle(action, update, context):
                     message_id=processing_message.message_id,
                     text="❌ 無法取得解答之書的回答"
                 )
+        elif action == 'tarot':
+            message_text = update.message.text or ""
+            parts = message_text.split(maxsplit=1)
+            raw_input = parts[1].strip() if len(parts) > 1 else ""
+
+            if not raw_input:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=TAROT_HELP_TEXT
+                )
+                return
+
+            spread, question = parse_tarot_command(raw_input)
+            if not question:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=TAROT_HELP_TEXT
+                )
+                return
+
+            try:
+                data = await run_blocking(ask_tarot_api, question, spread=spread)
+                reply = format_tarot_reply(data, default_question=question, default_spread=spread)
+            except Exception as e:
+                print(f"Error calling tarot API: {e}")
+                reply = f"❌ 塔羅占卜處理失敗：{e}"
+
+            if len(reply) <= 4000:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=reply
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=reply[:4000]
+                )
+                for i in range(4000, len(reply), 4000):
+                    await context.bot.send_message(chat_id=chat_id, text=reply[i:i+4000])
+
+        elif action in ('yiyu', 'yinyuan'):
+            message_text = update.message.text or ""
+            parts = message_text.split(maxsplit=1)
+            raw_input = parts[1].strip() if len(parts) > 1 else ""
+
+            if not raw_input:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=YINYUAN_HELP_TEXT
+                )
+                return
+
+            mode, question, first_year, second_year = parse_yinyuan_command(raw_input)
+            if not question:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=YINYUAN_HELP_TEXT
+                )
+                return
+
+            try:
+                data = await run_blocking(
+                    ask_yinyuan_api,
+                    question,
+                    mode=mode,
+                    first_year=first_year,
+                    second_year=second_year
+                )
+                reply = format_yinyuan_reply(data, default_question=question, mode=mode)
+            except Exception as e:
+                print(f"Error calling yinyuan API: {e}")
+                reply = f"❌ 姻緣測算處理失敗：{e}"
+
+            if len(reply) <= 4000:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=reply
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=reply[:4000]
+                )
+                for i in range(4000, len(reply), 4000):
+                    await context.bot.send_message(chat_id=chat_id, text=reply[i:i+4000])
         # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
             try:
@@ -1611,30 +1729,13 @@ async def handle(action, update, context):
                 await file.download_to_drive(file_path)
                 print(f"[DEBUG] 檔案已下載到 {file_path}")
                 
-                # 判斷是否為圖片檔案
-                image_exts = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"]
-                if ext.lower() in image_exts:
-                    print("[DEBUG] 進入圖片摘要模式，自動選擇 llm_client")
-                    if not base_url or "openai.com" in base_url:
-                        from openai import OpenAI
-                        client = OpenAI()
-                        print("[DEBUG] 使用 openai.OpenAI() client")
-                    else:
-                        from litellm import openai as litellm_openai
-                        client = litellm_openai.OpenAI(api_key=llm_api_key, base_url=base_url)
-                        print(f"[DEBUG] 使用 litellm.openai.OpenAI client, base_url={base_url}")
-                    md = MarkItDown(llm_client=client, llm_model=model)
-                else:
-                    print("[DEBUG] 進入文件摘要模式")
-                    md = MarkItDown()
-                print("[DEBUG] 開始 markitdown 轉換")
+                print("[DEBUG] 開始 AnyDoc 文件轉換")
                 try:
-                    result = await run_blocking(md.convert, file_path)
-                    text = result.text_content
-                    print(f"[DEBUG] markitdown 轉換完成，text 長度={len(text)}")
+                    text = await run_blocking(convert_document_to_markdown, file_path)
+                    print(f"[DEBUG] AnyDoc 轉換完成，text 長度={len(text)}")
                 except Exception as e:
                     import traceback
-                    print(f"[ERROR] markitdown 轉換失敗: {e}")
+                    print(f"[ERROR] AnyDoc 轉換失敗: {e}")
                     traceback.print_exc()
                     raise
                 # 可選：處理進度訊息，這裡簡化為一則
@@ -1705,6 +1806,9 @@ async def main():
         language_handler = CommandHandler('language', handle_language)
         model_handler = CommandHandler('model', handle_model)
         boa_handler = CommandHandler('boa', handle_boa)
+        tarot_handler = CommandHandler('tarot', handle_tarot)
+        yiyu_handler = CommandHandler('yiyu', handle_yiyu)
+        yinyuan_handler = CommandHandler('yinyuan', handle_yinyuan)
         clear_handler = CommandHandler('clear', handle_clear_context)
         context_handler = CommandHandler('context', handle_show_context)
         yt2audio_handler = CommandHandler('yt2audio', handle_yt2audio)
@@ -1722,6 +1826,9 @@ async def main():
         application.add_handler(language_handler)
         application.add_handler(model_handler)
         application.add_handler(boa_handler)
+        application.add_handler(tarot_handler)
+        application.add_handler(yiyu_handler)
+        application.add_handler(yinyuan_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

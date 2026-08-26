@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-08-26] - Tarot Reading (/tarot) & Moon Old Man Yinyuan Divination (/yiyu)
+
+### ✨ Added
+- **Tarot Reading (`/tarot`)**:
+  - Direct integration with `POST /api/tarot-question` on `qi.david888.com`.
+  - Supports spreads: `single`, `three` (default), `diamond`, `moon`, `horseshoe`, `celtic` and Chinese aliases.
+  - Formatted response showing spread name, drawn cards (upright/reversed, Major Arcana tags), and AI in-depth guidance.
+- **Yinyuan & Zodiac Compatibility (`/yiyu`, `/yinyuan`)**:
+  - Direct integration with `POST /api/yinyuan-question` on `qi.david888.com`.
+  - Supports default Moon Old Man fortune stick mode (`fortune`) and Zodiac match mode (`zodiac`).
+  - Formatted response showing fortune stick poem or Zodiac matching score and AI relationship advice.
+- **Divination Service Module (`app/services/divination.py`)**:
+  - Isolated parameter parsing, endpoint invocation with non-blocking execution, error handling, and message chunking for long texts.
+- **Demonstration & Help Guides**:
+  - Comprehensive usage examples for `/tarot` and `/yiyu` when invoked without arguments or via `/help`.
+
 ## [2026-07-23] - Long Media Timeout Controls & Non-Blocking Summary Processing
 
 ### 🚀 Improved

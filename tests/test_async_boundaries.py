@@ -15,6 +15,6 @@ class AsyncBoundaryTests(unittest.TestCase):
         self.assertIn("await run_blocking(download_video_audio, url)", source)
         self.assertIn("await run_blocking(process_user_input, user_input)", source)
         self.assertIn("await run_blocking(summarize, text_array", source)
-        self.assertIn("await run_blocking(md.convert, file_path)", source)
+        self.assertIn("await run_blocking(convert_document_to_markdown, file_path)", source)
         self.assertIn("await run_blocking(save_summary, summary_data)", source)
         self.assertIn("await run_blocking(send_to_discord, discord_message)", source)
