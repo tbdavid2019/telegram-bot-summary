@@ -59,6 +59,27 @@ class TestBoxService(unittest.TestCase):
         self.assertTrue(res["success"])
         self.assertEqual(res["data"]["total"], 50)
 
+    @patch("app.services.box.requests.post")
+    def test_upload_url_fallback(self, mock_post):
+        # First call fails, second call succeeds
+        mock_fail = MagicMock()
+        mock_fail.json.return_value = {"result": "error", "message": "Primary down"}
+        mock_success = MagicMock()
+        mock_success.json.return_value = {
+            "result": "success",
+            "data": {
+                "id": "102",
+                "url": "https://d36gp3xejpe77o.cloudfront.net/storage/audio/test.mp3",
+                "share_url": "https://box.glsoft.ai/v/fallback"
+            }
+        }
+        mock_post.side_effect = [mock_fail, mock_success]
+
+        res = upload_url_to_box("https://example.com/audio.mp3", title="Audio")
+        self.assertTrue(res["success"])
+        self.assertEqual(res["id"], "102")
+        self.assertEqual(res["endpoint"], "https://box.glsoft.ai")
+
 
 if __name__ == "__main__":
     unittest.main()

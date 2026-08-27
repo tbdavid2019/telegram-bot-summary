@@ -55,6 +55,12 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
    - Transcripts, full ASR transcriptions, and `/yt2text` outputs MUST be delivered directly as `.txt` files (`send_document`) to prevent chat flooding and avoid Telegram API rate limits (HTTP 429).
    - Normal summary responses under 4,000 characters should be sent as direct chat messages.
 
+4. **888box Cloud Asset Storage & Multi-Endpoint Failover**:
+   - Primary Endpoint: `https://box.david888.com`
+   - Backup 1: `https://box.glsoft.ai`
+   - Backup 2: `https://box.aiurl.tw`
+   - Use `app/services/box.py` for all file and URL uploads; always ensure automated fallback across these 3 nodes.
+
 ---
 
 ## 🚀 4. Deployment Targets & Server Verification

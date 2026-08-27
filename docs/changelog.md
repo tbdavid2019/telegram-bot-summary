@@ -9,7 +9,11 @@
   - 智慧保留多輪對話上下文（`chat_history`），支援上下文連貫聊天。
   - 當用戶發送網址（URL）、上傳檔案、或輸入帶有「總結/摘要/TLDR」關鍵字與超長文章時，則精準啟動完整結構化摘要。
 - **888box 雲端資產儲存庫整合 (`app/services/box.py`)**:
-  - 串接 `https://box.david888.com/api.php`，支援本機檔案上傳 (`upload`) 與遠端 URL 轉存 (`upload_url`)。
+  - 串接 888box API，支援本機檔案上傳 (`upload`) 與遠端 URL 轉存 (`upload_url`)。
+  - **多節點自動故障轉移 (Failover)**：
+    - 主要節點：`https://box.david888.com`
+    - 備用節點 1：`https://box.glsoft.ai`
+    - 備用節點 2：`https://box.aiurl.tw`
   - 自動生成 CloudFront CDN 高速下載直鏈與 888box Web 分享頁面。
   - 新增指令 `/box <URL> [標題]`：支援直接將遠端音訊、影片、文件、圖片轉存至 888box。
   - 新增指令 `/boxstats`：即時查看 888box 當前儲存的圖片、影片、音訊、檔案總數統計。
