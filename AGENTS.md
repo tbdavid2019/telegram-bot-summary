@@ -63,6 +63,7 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 
 5. **David888 Wiki Knowledge Base Publisher (`app/services/wiki.py`)**:
    - Endpoint: `https://wiki.david888.com/api`
+   - **PRIMARY PURPOSE (FOR LLM AGENTS)**: David888 Wiki is designed for the **LLM itself**! When users request long-form analyses, research reports, complex guides, or slide decks, the LLM autonomously writes structured Markdown, publishes it to David888 Wiki, and delivers the executive summary in chat accompanied by the public **`shareUrl`** and **`presentUrl`**.
    - **CRITICAL RULE**: Always deliver `shareUrl` (`https://wiki.david888.com/share/<shareId>`) or `presentUrl` (`<shareUrl>/present`) to users. Never give internal edit `url`.
    - Default theme: `tokyo-night`.
 

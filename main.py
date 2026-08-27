@@ -1363,34 +1363,45 @@ async def handle(action, update, context):
 
     try:
         if action == 'start':
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id,
-                                                text="Oli 333 - Summary Bot。v20260416。可以幫您自動總結為繁體中文或英文的內容。")
+            start_text = (
+                "👋 歡迎使用 **Oli 333 - Summary & AI Bot**！\n\n"
+                "🤖 我是您的全能 AI 助理與內容摘要機器人，具備以下強大能力：\n\n"
+                "• 💬 **自然流暢 AI 對話**：直接打字輸入任何問題，日常聊天、程式諮詢、問題解答即刻回應。\n"
+                "• 📄 **全格式文件摘要**：支援 PDF、Word (DOCX)、Excel (XLSX)、PPTX、EPUB、CSV、TXT 拖曳即摘要。\n"
+                "• 🎥 **1000+ 影音與 Podcast**：直接貼上 YouTube、Bilibili、TikTok、Twitch、Podcast 網址。\n"
+                "• 🎙️ **Whisper ASR 聽寫**：預設輸出 `[MM:SS]` 精確時間軸逐字稿檔案。\n"
+                "• 📚 **David888 Wiki 知識庫**：長篇深度報告與分析自動發布為美麗排版網頁與投影片。\n"
+                "• 📦 **888box 雲端資產轉存**：轉存遠端影音檔案並提供 CloudFront CDN 直鏈。\n"
+                "• 🔮 **東方與西方占卜**：塔羅牌抽牌 (`/tarot`)、月老求籤與生肖合婚 (`/yiyu`)、解答之書 (`/boa`)。\n\n"
+                "👉 輸入 `/help` 查看完整指令清單與使用範例！"
+            )
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=start_text, parse_mode='Markdown')
         elif action == 'help':
-            help_text = """
-   I can summarize text, URLs, PDFs, video and podcast content for you. 
-   請直接輸入 URL 或想要總結的文字或PDF，無論是何種語言，我都會幫你自動總結為繁體中文的內容。
-   支援影片網站：YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch 等 1000+ 網站
-   支援 Podcast：Pocket Casts、SoundOn、Apple Podcast 及各種 RSS feed podcast
-   Here are the available commands:
-     /start - Start the bot
-     /help - Show this help message
-     /lang - Switch language (切換語言)
-     /model - Switch/List LLM models (切換/列出模型)
-     /boa - Book of Answers 解答之書
-     /tarot [牌陣] [問題] - 塔羅占卜與 AI 深度解牌
-     /yiyu [模式] [問題] - 月老姻緣籤 / 生肖合婚指引
-     /box <URL> [標題] - 轉存遠端資源至 888box
-     /boxstats - 查看 888box 資產統計
-     /wiki [標題/內容] - 發布至 David888 Wiki 知識庫 (產出美麗好讀版與投影片)
-     /wikiread <路徑> - 讀取 David888 Wiki 頁面內容
-     /context - Show current context (顯示對話上下文)
-     /clear - Clear conversation history (清除對話歷史)
-     /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
-     /yt2text <Video URL> - Convert video to text (支援 YouTube、Vimeo、Bilibili 等)    
-   You can also send me any text or URL to summarize.
-   After summarizing, you can ask follow-up questions about the content.
-            """
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text)
+            help_text = (
+                "📖 **【Oli Summary Bot 使用指南與指令清單】**\n\n"
+                "💡 **直接發送內容（無需輸入指令）**：\n"
+                "• **文字問答/對話**：輸入任何問題（如「如何學習 Rust」、「幫我潤飾這段郵件」），AI 自然流暢對話。\n"
+                "• **網址/影音摘要**：直接貼上 YouTube、Bilibili、TikTok 或新聞文章 URL 自動產出 6 段式結構化摘要。\n"
+                "• **文件摘要**：直接上傳 PDF、Word、Excel、PPT、EPUB、CSV 檔案即刻解析摘要。\n\n"
+                "📋 **可用指令一覽**：\n"
+                "• `/start` - 查看機器人介紹與功能總覽\n"
+                "• `/help` - 顯示此說明訊息\n"
+                "• `/lang` - 切換語言 (繁體中文 ⇄ English)\n"
+                "• `/model` - 切換/列出可用 LLM 模型\n"
+                "• `/tarot [牌陣] [問題]` - 塔羅占卜 (支援單張/三張/鑽石/六角/塞爾特十字牌陣)\n"
+                "• `/yiyu [模式] [問題]` - 月老姻緣求籤 / 生肖合婚契合度測算\n"
+                "• `/boa` - Book of Answers 解答之書\n"
+                "• `/wiki [標題/內容]` - 發布至 David888 Wiki 知識庫 (產出公開好讀版與投影片)\n"
+                "• `/wikiread <路徑>` - 讀取 David888 Wiki 頁面內容\n"
+                "• `/box <URL> [標題]` - 將遠端影片/音訊/檔案轉存至 888box 雲端\n"
+                "• `/boxstats` - 查看 888box 資產統計\n"
+                "• `/context` - 顯示當前對話上下文與問答輪數\n"
+                "• `/clear` - 清除對話歷史與摘要記錄\n"
+                "• `/yt2audio <URL>` - 下載影片音頻 (MP3)\n"
+                "• `/yt2text <URL>` - 將影片音訊轉為帶時間戳逐字稿文字檔 (.txt)\n\n"
+                "💬 摘要完成後，直接輸入問題即可對該內容進行深入續問！"
+            )
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text, parse_mode='Markdown')
         elif action == 'language':
             # 顯示語言選擇按鈕
             current_lang = context.user_data.get('language', 'zh-TW')
@@ -1799,6 +1810,23 @@ async def handle(action, update, context):
                     chat_history.append({"role": "assistant", "content": answer})
                     context.user_data['chat_history'] = chat_history[-10:]
                     
+                    # 判斷是否為長篇深度分析或報告，若是則由 LLM 自動發布至 David888 Wiki
+                    is_report_request = any(k in user_input for k in ["分析", "報告", "研究", "整理", "比較", "架構", "教學", "report", "analysis", "guide", "overview"])
+                    if len(answer) >= 1200 or (is_report_request and len(answer) >= 600):
+                        try:
+                            wiki_res = await run_blocking(publish_wiki_page, answer, title=user_input[:25])
+                            if wiki_res.get("success"):
+                                share_url = wiki_res.get("shareUrl")
+                                present_url = wiki_res.get("presentUrl")
+                                wiki_footer = (
+                                    f"\n\n📚 **【David888 Wiki 完整排版與簡報】**\n"
+                                    f"🌐 線上好讀版：{share_url}\n"
+                                    f"🖥️ 投影片簡報：{present_url}"
+                                )
+                                answer += wiki_footer
+                        except Exception as e:
+                            print(f"[DEBUG] Auto publish to wiki failed: {e}")
+
                     if show_processing and processing_message:
                         try:
                             await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)

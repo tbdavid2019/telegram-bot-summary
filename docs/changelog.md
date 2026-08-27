@@ -1,8 +1,14 @@
 # Changelog
 
-## [2026-08-27] - David888 Wiki Publisher, Natural AI Conversation, 888box & Whisper Timestamps
+## [2026-08-27] - LLM Autonomous Wiki Publishing, Rich Greetings & Multi-Service Integration
 
 ### ✨ Added & Improved
+- **LLM 自動發布深度分析報告至 David888 Wiki**:
+  - 當用戶要求撰寫長篇深度分析、架構研究、教學導讀或各類報告時，LLM 生成的高品質 Markdown 內容將由系統自動發布至 `wiki.david888.com`。
+  - 對話訊息除了提供精簡摘要外，自動附上美觀排版之線上閱讀連結 (`shareUrl`) 與 Reveal 2D 簡報模式 (`presentUrl`)。
+- **全新升級之招呼語與幫助指南 (`/start` & `/help`)**:
+  - 全面更新 `/start` 歡迎訊息與各項核心功能指引。
+  - 重新架構 `/help` 命令指南，依日常對話、文件摘要、Wiki 知識庫、888box 雲端、占卜命理分門別類，並附上清晰用法範例。
 - **David888 Wiki 知識庫整合 (`app/services/wiki.py`)**:
   - 串接 `https://wiki.david888.com/api`，支援原生 Markdown 頁面發布、覆寫與讀取。
   - 新增指令 `/wiki [標題/內容]`：一鍵將剛生成的 AI 摘要或自訂 Markdown 發布至 David888 Wiki，並回傳極美閱讀版 (`shareUrl`) 與簡報模式 (`presentUrl`)。
