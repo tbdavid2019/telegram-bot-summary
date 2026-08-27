@@ -19,7 +19,13 @@ import markdown
 import asyncio
 import uvicorn
 from app.runtime import run_blocking
-from app.services.content import is_url, split_user_input, convert_document_to_markdown
+from app.services.content import (
+    is_url,
+    split_user_input,
+    convert_document_to_markdown,
+    format_timestamp,
+    format_whisper_segments,
+)
 from app.services.divination import (
     parse_tarot_command,
     parse_yinyuan_command,
@@ -583,6 +589,7 @@ def audio_transcription(video_url):
         for i, chunk in enumerate(chunks):
             temp_file_path = f"/tmp/{str(uuid.uuid4())}.wav"
             chunk.export(temp_file_path, format="wav")
+            offset_seconds = i * (chunk_size / 1000.0)
 
             curl_command = [
                 "curl",
@@ -590,14 +597,16 @@ def audio_transcription(video_url):
                 "-H", f"Authorization: Bearer {os.environ.get('GROQ_API_KEY', 'YOUR_GROQ_API_KEY')}",
                 "-H", "Content-Type: multipart/form-data",
                 "-F", f"file=@{temp_file_path}",
-                "-F", "model=whisper-large-v3"
+                "-F", "model=whisper-large-v3",
+                "-F", "response_format=verbose_json"
             ]
 
             result = subprocess.run(curl_command, capture_output=True, text=True, timeout=ASR_TIMEOUT_SECONDS)
 
             try:
                 response_json = json.loads(result.stdout)
-                transcript += response_json["text"]
+                chunk_transcript = format_whisper_segments(response_json, offset_seconds=offset_seconds)
+                transcript += chunk_transcript if chunk_transcript else response_json.get("text", "") + "\n"
             except KeyError as e:
                 print("KeyError:", e)
                 print("Response JSON:", response_json)
@@ -609,16 +618,16 @@ def audio_transcription(video_url):
         os.remove(output_path)  # 刪除下載的 mp3 文件
 
         # 將轉錄文本分割成 chunks
-        output_sentences = transcript.split()
+        output_lines = [line.strip() for line in transcript.split("\n") if line.strip()]
         output_chunks = []
         current_chunk = ""
 
-        for word in output_sentences:
-            if len(current_chunk) + len(word) + 1 <= chunk_size:
-                current_chunk += word + ' '
+        for line in output_lines:
+            if len(current_chunk) + len(line) + 1 <= chunk_size:
+                current_chunk += line + '\n'
             else:
                 output_chunks.append(current_chunk.strip())
-                current_chunk = word + ' '
+                current_chunk = line + '\n'
 
         if current_chunk:
             output_chunks.append(current_chunk.strip())
@@ -864,22 +873,25 @@ def download_and_transcribe_podcast(audio_url):
             print(f"Transcribing chunk {i+1}/{len(chunks)}")
             temp_chunk_path = f"/tmp/{str(uuid.uuid4())}.wav"
             chunk.export(temp_chunk_path, format="wav")
+            offset_seconds = i * (chunk_duration / 1000.0)
             
-            # 使用 Groq Whisper API 轉錄
+            # 使用 Groq Whisper API 轉錄 (預設附帶時間戳)
             curl_command = [
                 "curl",
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 "-H", f"Authorization: Bearer {groq_api_key}",
                 "-H", "Content-Type: multipart/form-data",
                 "-F", f"file=@{temp_chunk_path}",
-                "-F", "model=whisper-large-v3"
+                "-F", "model=whisper-large-v3",
+                "-F", "response_format=verbose_json"
             ]
             
             result = subprocess.run(curl_command, capture_output=True, text=True, timeout=ASR_TIMEOUT_SECONDS)
             
             try:
                 response_json = json.loads(result.stdout)
-                transcript += response_json.get("text", "")
+                chunk_transcript = format_whisper_segments(response_json, offset_seconds=offset_seconds)
+                transcript += chunk_transcript if chunk_transcript else response_json.get("text", "") + "\n"
             except (KeyError, json.JSONDecodeError) as e:
                 print(f"Error decoding transcription response: {e}")
             
@@ -889,16 +901,16 @@ def download_and_transcribe_podcast(audio_url):
         os.remove(temp_audio_path)
         
         # 將轉錄文本分割成chunks
+        output_lines = [line.strip() for line in transcript.split("\n") if line.strip()]
         output_chunks = []
         current_chunk = ""
-        words = transcript.split()
         
-        for word in words:
-            if len(current_chunk) + len(word) + 1 <= chunk_size:
-                current_chunk += word + ' '
+        for line in output_lines:
+            if len(current_chunk) + len(line) + 1 <= chunk_size:
+                current_chunk += line + '\n'
             else:
                 output_chunks.append(current_chunk.strip())
-                current_chunk = word + ' '
+                current_chunk = line + '\n'
         
         if current_chunk:
             output_chunks.append(current_chunk.strip())

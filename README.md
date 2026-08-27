@@ -245,7 +245,7 @@ chmod +x setup_chrome_container.sh
 - **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura`）。
 - **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`，全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
 - **Supports 1000+ Video Websites**：處理來自 YouTube、Vimeo、Bilibili、TikTok、Twitch 等 1000+ 影片網站的字幕及聽寫。
-- **Whisper API**：自動轉錄無字幕的影片（需啟用 `USE_AUDIO_FALLBACK`）。
+- **Whisper API**：自動轉錄無字幕的影片與音訊，預設附帶精確時間戳 (`[MM:SS]`) 標註。
 - **Divination & Astrology**：內建塔羅牌占卜 (`/tarot`)、月老姻緣籤與生肖合婚 (`/yiyu`)。
 - **Email Summaries**：自動將生成的摘要發送到郵箱。
 - **Discord Webhook**：支援將摘要同步發送到 Discord 頻道。
@@ -271,7 +271,7 @@ chmod +x setup_chrome_container.sh
 | /context | 顯示當前對話上下文 |
 | /clear | 清除對話歷史 |
 | /yt2audio <URL> | 下載影片音頻 |
-| /yt2text <URL> | 將影片轉成文字 |
+| /yt2text <URL> | 將影片轉成帶時間戳的逐字稿文字檔 (`.txt`) |
 
 ### 💡 使用技巧
 

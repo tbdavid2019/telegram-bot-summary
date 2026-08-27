@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-08-27] - Whisper ASR Timestamps & Multi-Format Documents
+
+### ✨ Added & Improved
+- **Whisper ASR 預設時間戳標註**:
+  - Groq Whisper ASR API 升級使用 `response_format=verbose_json`，自動精準提取每一語句的時間區段 (`start`, `end`)。
+  - 預設於逐字稿與音訊轉文字中標註 `[MM:SS]` / `[HH:MM:SS]` 時間軸標記。
+  - 封裝 `format_timestamp` 與 `format_whisper_segments` 於 `app/services/content.py` 並建立完整單元測試。
+  - 於 `/yt2text` 及音訊轉錄中直接以 `.txt` 檔案格式提供帶時間軸之全文逐字稿。
+
 ## [2026-08-26] - AnyDoc Document Engine & Tarot / Yinyuan Divination
 
 ### 🔄 Changed & Improved
