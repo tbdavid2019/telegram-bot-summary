@@ -77,3 +77,4 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 | **Private Bot** | `@oli_summary_bot` | `ssh bitnami@git.glsoft.ai` | `cd /home/bitnami/telegram-bot-summary && git pull origin main && DEPLOY_CONFIRM=1 ./build.sh` |
 
 - **Docker Base Image**: Always use `python:3.12-slim` (with `audioop-lts` in `requirements.txt`) to avoid Python 3.13 standard library removals (`audioop`) and slow C-extension wheel compilations.
+- **Watchtower Auto-Deploy**: Both `git.glsoft.ai` and `aicreate360.com` run `containrrr/watchtower` configured with `DOCKER_API_VERSION=1.45`, `WATCHTOWER_POLL_INTERVAL=60`, monitoring all containers. When a new Docker image is pushed to Docker Hub, both servers automatically update within 60 seconds.

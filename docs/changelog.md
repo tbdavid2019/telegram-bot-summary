@@ -9,6 +9,10 @@
 - **防止模型偽工具調用標籤外洩 (Output Sanitization & Tool Call Interceptor)**:
   - 封裝 `sanitize_model_output` 與 `is_wiki_or_report_request` 於 `app/services/content.py`。
   - 攔截並解析任何模型意外產生的 `[CALL:/wiki {...}]` 偽代碼標籤，自動提取內容完成發布，杜絕 raw JSON 洩漏到 Telegram 聊天視窗。
+- **Watchtower 全自動持續部署修正與上線 (Automated Continuous Deployment)**:
+  - 修正 `git.glsoft.ai` 上 Watchtower 之前開啟 `WATCHTOWER_LABEL_ENABLE=true` 導致未標記容器被略過的問題。
+  - 在 `aicreate360.com` 與 `git.glsoft.ai` 雙伺服器正式安裝並啟用 Watchtower，配置 `DOCKER_API_VERSION=1.45` 與 `WATCHTOWER_POLL_INTERVAL=60`。
+  - 當 Docker Hub 發布新版映像檔時，兩台伺服器均會在 60 秒內自動拉取並重啟最新容器。
 - **全新升級之招呼語與幫助指南 (`/start` & `/help`)**:
   - 全面更新 `/start` 歡迎訊息與各項核心功能指引。
   - 重新架構 `/help` 命令指南，依日常對話、文件摘要、Wiki 知識庫、888box 雲端、占卜命理分門別類，並附上清晰用法範例。
