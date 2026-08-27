@@ -36,6 +36,11 @@ from app.services.divination import (
     TAROT_HELP_TEXT,
     YINYUAN_HELP_TEXT,
 )
+from app.services.box import (
+    upload_file_to_box,
+    upload_url_to_box,
+    get_box_stats,
+)
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -1063,6 +1068,14 @@ async def handle_yinyuan(update, context):
     """處理月老姻緣與生肖合婚命令"""
     return await handle('yinyuan', update, context)
 
+async def handle_box(update, context):
+    """處理 888box 轉存 URL 命令"""
+    return await handle('box', update, context)
+
+async def handle_boxstats(update, context):
+    """處理 888box 資產統計命令"""
+    return await handle('boxstats', update, context)
+
 async def handle_language(update, context):
     """處理語言切換命令"""
     return await handle('language', update, context)
@@ -1309,6 +1322,8 @@ def set_my_commands(telegram_token):
         {"command": "clear", "description": "清除對話歷史 Clear history"},
         {"command": "yt2audio", "description": "下載影片音頻（支援 YouTube、Vimeo、Bilibili 等）"},
         {"command": "yt2text", "description": "將影片轉成文字（支援 YouTube、Vimeo、Bilibili 等）"},
+        {"command": "box", "description": "轉存 URL 至 888box 空間"},
+        {"command": "boxstats", "description": "查看 888box 資產統計"},
     ]
     data = {"commands": commands}
     response = requests.post(url, json=data)
@@ -1348,6 +1363,8 @@ async def handle(action, update, context):
      /boa - Book of Answers 解答之書
      /tarot [牌陣] [問題] - 塔羅占卜與 AI 深度解牌
      /yiyu [模式] [問題] - 月老姻緣籤 / 生肖合婚指引
+     /box <URL> [標題] - 轉存遠端資源至 888box
+     /boxstats - 查看 888box 資產統計
      /context - Show current context (顯示對話上下文)
      /clear - Clear conversation history (清除對話歷史)
      /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
@@ -1553,6 +1570,62 @@ async def handle(action, update, context):
                 )
                 for i in range(4000, len(reply), 4000):
                     await context.bot.send_message(chat_id=chat_id, text=reply[i:i+4000])
+        elif action == 'box':
+            user_input = update.message.text.split(maxsplit=2)
+            if len(user_input) < 2:
+                box_help = (
+                    "📦 【888box 資產轉存工具】\n\n"
+                    "用法範例：\n"
+                    "• `/box <URL>`（轉存遠端影片、音訊、圖片或檔案）\n"
+                    "• `/box <URL> 我的檔案標題`（指定標題轉存）\n"
+                    "• `/boxstats`（查看當前儲存統計）\n\n"
+                    "轉存成功後將提供 CloudFront CDN 直鏈與 888box 分享連結！"
+                )
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=box_help)
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=box_help)
+                return
+
+            target_url = user_input[1]
+            title = user_input[2] if len(user_input) > 2 else ""
+            res = await run_blocking(upload_url_to_box, target_url, title=title)
+            if res.get("success"):
+                reply = (
+                    f"✅ 【888box 轉存成功】\n\n"
+                    f"🆔 資源 ID：`{res.get('id')}`\n"
+                    f"🔗 CDN 直鏈：{res.get('url')}\n"
+                    f"🌐 分享頁面：{res.get('share_url')}"
+                )
+            else:
+                reply = f"❌ 轉存失敗：{res.get('error', '未知錯誤')}"
+
+            if processing_message:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=reply)
+
+        elif action == 'boxstats':
+            res = await run_blocking(get_box_stats)
+            if res.get("success"):
+                data = res.get("data", {})
+                reply = (
+                    f"📊 【888box 資產統計】\n\n"
+                    f"• 📦 總資產數：{data.get('total', 0)}\n"
+                    f"• 🖼️ 圖片：{data.get('image', 0)}\n"
+                    f"• 🎥 影片：{data.get('video', 0)}\n"
+                    f"• 🎵 音訊：{data.get('audio', 0)}\n"
+                    f"• 📄 檔案：{data.get('file', 0)}\n\n"
+                    f"🌐 主機位址：https://box.david888.com"
+                )
+            else:
+                reply = f"❌ 取得統計失敗：{res.get('error', '未知錯誤')}"
+
+            if processing_message:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=reply)
+
         # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
             try:
@@ -1825,6 +1898,8 @@ async def main():
         context_handler = CommandHandler('context', handle_show_context)
         yt2audio_handler = CommandHandler('yt2audio', handle_yt2audio)
         yt2text_handler = CommandHandler('yt2text', handle_yt2text)
+        box_handler = CommandHandler('box', handle_box)
+        boxstats_handler = CommandHandler('boxstats', handle_boxstats)
         set_my_commands(telegram_token)
         summarize_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize)
         file_handler = MessageHandler(filters.Document.ALL, handle_file)
@@ -1841,6 +1916,8 @@ async def main():
         application.add_handler(tarot_handler)
         application.add_handler(yiyu_handler)
         application.add_handler(yinyuan_handler)
+        application.add_handler(box_handler)
+        application.add_handler(boxstats_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

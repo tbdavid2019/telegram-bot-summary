@@ -125,13 +125,34 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        [AI 提供之生肖互動與相處建議]
 ```
 
+### 場景 9: 888box 雲端資產轉存與管理
+```
+👤 用戶: /box https://example.com/video.mp4 實用教學影片
+🤖 Bot: ✅ 【888box 轉存成功】
+
+       🆔 資源 ID：`52`
+       🔗 CDN 直鏈：https://d36gp3xejpe77o.cloudfront.net/storage/video/2026/08/27/video.mp4
+       🌐 分享頁面：https://box.david888.com/v/abcd1234
+
+👤 用戶: /boxstats
+🤖 Bot: 📊 【888box 資產統計】
+       • 📦 總資產數：44
+       • 🖼️ 圖片：11
+       • 🎥 影片：9
+       • 🎵 音訊：18
+       • 📄 檔案：6
+       🌐 主機位址：https://box.david888.com
+```
+
 ---
 
 ## 核心與新增功能
 
+- **888box 雲端資產儲存庫**：整合 `https://box.david888.com`，提供 `/box <URL> [標題]` 遠端轉存各類影片、音訊、文件、圖片，自動產出 CloudFront 高速 CDN 下載直鏈與 Web 分享頁面，並可用 `/boxstats` 即時查看儲存統計。
 - **AnyDoc 高效能文件解析**：採用 Firecrawl Rust 引擎 `firecrawl-anydoc`（取代 MarkItDown），支援 PDF、Word (DOCX)、Excel (XLSX)、PowerPoint (PPTX)、EPUB、RTF、CSV 等文件極速轉為 Markdown 進行摘要。
 - **塔羅占卜 (`/tarot`)**：支援單張、三張牌、鑽石、月亮、馬蹄鐵、塞爾特十字牌陣，提供抽牌正逆位展示與 AI 深度解牌指引。
 - **月老姻緣與生肖合婚 (`/yiyu`)**：支援月老求籤解籤詩與出生年生肖契合度合婚測算。
+- **Whisper ASR 時間戳聽寫**：調用 GROQ Whisper API，預設輸出 `[MM:SS]` 精確時間軸標記，並以 `.txt` 檔案直接下載。
 - **泛化影片支援**：支援 1000+ 影片網站，包括 YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch、Facebook、Instagram 等。
 - **Whisper 聽寫功能**：調用免費的 GROQ Whisper API，用於自動生成字幕。
 - **無字幕處理**：當影片無字幕時，可以啟用聽力辨識生成字幕。
@@ -272,6 +293,8 @@ chmod +x setup_chrome_container.sh
 | /clear | 清除對話歷史 |
 | /yt2audio <URL> | 下載影片音頻 |
 | /yt2text <URL> | 將影片轉成帶時間戳的逐字稿文字檔 (`.txt`) |
+| /box <URL> [標題] | 將遠端影片、音訊、圖片、文件轉存至 888box 雲端 |
+| /boxstats | 查看 888box 當前儲存的資產總數與分類統計 |
 
 ### 💡 使用技巧
 

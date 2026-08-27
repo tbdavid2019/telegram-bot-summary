@@ -1,8 +1,13 @@
 # Changelog
 
-## [2026-08-27] - Whisper ASR Timestamps & Multi-Format Documents
+## [2026-08-27] - 888box Cloud Asset Storage & Whisper ASR Timestamps
 
 ### ✨ Added & Improved
+- **888box 雲端資產儲存庫整合 (`app/services/box.py`)**:
+  - 串接 `https://box.david888.com/api.php`，支援本機檔案上傳 (`upload`) 與遠端 URL 轉存 (`upload_url`)。
+  - 自動生成 CloudFront CDN 高速下載直鏈與 888box Web 分享頁面。
+  - 新增指令 `/box <URL> [標題]`：支援直接將遠端音訊、影片、文件、圖片轉存至 888box。
+  - 新增指令 `/boxstats`：即時查看 888box 當前儲存的圖片、影片、音訊、檔案總數統計。
 - **Whisper ASR 預設時間戳標註**:
   - Groq Whisper ASR API 升級使用 `response_format=verbose_json`，自動精準提取每一語句的時間區段 (`start`, `end`)。
   - 預設於逐字稿與音訊轉文字中標註 `[MM:SS]` / `[HH:MM:SS]` 時間軸標記。
