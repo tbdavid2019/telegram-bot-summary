@@ -111,3 +111,19 @@ def sanitize_model_output(text: str) -> tuple[str, str]:
             except Exception:
                 pass
     return t, ""
+
+
+def is_conversation_followup(text: str, history: dict | None) -> bool:
+    """Check if the user input is genuinely asking follow-up questions about a previous summary."""
+    if not history or not history.get("summary"):
+        return False
+    t = text.strip().lower()
+    if is_url(t) or is_explicit_summary_request(t) or is_wiki_or_report_request(t):
+        return False
+    # If the text explicitly starts with creative/generation commands, it's not a followup to the old summary
+    if any(t.startswith(k) for k in ("寫", "幫我寫", "請寫", "製作", "生成", "translate", "write", "create")):
+        return False
+    referring_words = ("這篇", "文中", "作者", "上面", "剛剛", "影片", "文章", "內容", "他說", "提到", "第一點", "第二點", "這個總結")
+    if any(k in t for k in referring_words):
+        return True
+    return len(t) < 300

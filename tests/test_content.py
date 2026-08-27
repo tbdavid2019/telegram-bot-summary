@@ -6,11 +6,23 @@ from app.services.content import (
     is_url,
     is_explicit_summary_request,
     is_wiki_or_report_request,
+    is_conversation_followup,
     sanitize_model_output,
 )
 
 
 class TestContentHelpers(unittest.TestCase):
+    def test_is_conversation_followup(self):
+        history = {"summary": "這是文章摘要", "original_content": ["原文內容"]}
+        self.assertTrue(is_conversation_followup("請問作者在文中提到的第三點是什麼？", history))
+        self.assertTrue(is_conversation_followup("可以再解釋清楚一點嗎？", history))
+        # Standalone requests must NOT be treated as follow-up to old summary
+        self.assertFalse(is_conversation_followup("你透過 david888 wiki 寫一個 英語對話給我", history))
+        self.assertFalse(is_conversation_followup("寫一個 Python 排序函數", history))
+        self.assertFalse(is_conversation_followup("請幫我寫一份報告", history))
+        self.assertFalse(is_conversation_followup("https://example.com", history))
+        self.assertFalse(is_conversation_followup("問題", None))
+
     def test_is_wiki_or_report_request(self):
         self.assertTrue(is_wiki_or_report_request("你透過 david888 wiki 寫一個 英語對話給我。"))
         self.assertTrue(is_wiki_or_report_request("請幫我寫一份市場分析報告"))

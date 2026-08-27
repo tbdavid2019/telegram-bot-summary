@@ -27,6 +27,7 @@ from app.services.content import (
     format_whisper_segments,
     is_explicit_summary_request,
     is_wiki_or_report_request,
+    is_conversation_followup,
     sanitize_model_output,
 )
 from app.services.divination import (
@@ -1746,7 +1747,7 @@ async def handle(action, update, context):
                 
                 # 1. 檢查是否為摘要續問
                 history = context.user_data.get('conversation_history')
-                if history and not is_url(user_input) and len(user_input) < 500 and not is_explicit_summary_request(user_input):
+                if is_conversation_followup(user_input, history):
                     # 處理續問
                     language = context.user_data.get('language', 'zh-TW')
                     
