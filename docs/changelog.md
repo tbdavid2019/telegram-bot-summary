@@ -4,8 +4,11 @@
 
 ### ✨ Added & Improved
 - **LLM 自動發布深度分析報告至 David888 Wiki**:
-  - 當用戶要求撰寫長篇深度分析、架構研究、教學導讀或各類報告時，LLM 生成的高品質 Markdown 內容將由系統自動發布至 `wiki.david888.com`。
+  - 當用戶要求撰寫長篇深度分析、架構研究、教學導讀、對話劇本或各類報告時，LLM 生成的高品質 Markdown 內容將由系統自動發布至 `wiki.david888.com`。
   - 對話訊息除了提供精簡摘要外，自動附上美觀排版之線上閱讀連結 (`shareUrl`) 與 Reveal 2D 簡報模式 (`presentUrl`)。
+- **防止模型偽工具調用標籤外洩 (Output Sanitization & Tool Call Interceptor)**:
+  - 封裝 `sanitize_model_output` 與 `is_wiki_or_report_request` 於 `app/services/content.py`。
+  - 攔截並解析任何模型意外產生的 `[CALL:/wiki {...}]` 偽代碼標籤，自動提取內容完成發布，杜絕 raw JSON 洩漏到 Telegram 聊天視窗。
 - **全新升級之招呼語與幫助指南 (`/start` & `/help`)**:
   - 全面更新 `/start` 歡迎訊息與各項核心功能指引。
   - 重新架構 `/help` 命令指南，依日常對話、文件摘要、Wiki 知識庫、888box 雲端、占卜命理分門別類，並附上清晰用法範例。

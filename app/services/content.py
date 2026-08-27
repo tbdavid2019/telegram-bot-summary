@@ -78,3 +78,36 @@ def is_explicit_summary_request(text: str) -> bool:
     if len(t) >= 600 and ("\n\n" in t or t.count("。") >= 4):
         return True
     return False
+
+
+def is_wiki_or_report_request(text: str) -> bool:
+    """Check if user explicitly asked to use wiki or requested a report/dialogue/tutorial."""
+    t = text.lower()
+    wiki_triggers = ("wiki", "維基", "david888", "888wiki")
+    if any(k in t for k in wiki_triggers):
+        return True
+    report_triggers = (
+        "分析", "報告", "研究", "整理", "比較", "架構", "教學", "口說",
+        "對話", "簡報", "投影片", "教案", "企劃", "範例", "大綱",
+        "report", "analysis", "guide", "overview", "dialogue", "presentation"
+    )
+    return any(k in t for k in report_triggers)
+
+
+def sanitize_model_output(text: str) -> tuple[str, str]:
+    """Extract clean content and potential title from model output if it contains pseudo tool call tokens like [CALL:/wiki {...}]."""
+    import json
+    t = text.strip()
+    if "[CALL:" in t:
+        match = re.search(r"\[CALL:[^\{]*(\{.*\})\s*\]", t, re.DOTALL)
+        if match:
+            json_str = match.group(1).strip()
+            try:
+                data = json.loads(json_str, strict=False)
+                content = data.get("content") or data.get("text") or ""
+                title = data.get("title") or data.get("slug") or ""
+                if content:
+                    return content, title
+            except Exception:
+                pass
+    return t, ""

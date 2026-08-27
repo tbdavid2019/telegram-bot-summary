@@ -26,6 +26,8 @@ from app.services.content import (
     format_timestamp,
     format_whisper_segments,
     is_explicit_summary_request,
+    is_wiki_or_report_request,
+    sanitize_model_output,
 )
 from app.services.divination import (
     parse_tarot_command,
@@ -1804,17 +1806,22 @@ async def handle(action, update, context):
                         messages.append(msg)
                     
                     selected_model = context.user_data.get('selected_model', None)
-                    answer = await run_blocking(call_gpt_api, user_input, messages, selected_model=selected_model)
+                    raw_answer = await run_blocking(call_gpt_api, user_input, messages, selected_model=selected_model)
+                    
+                    # 清理任何潛在的偽工具調用標籤 (防止裸露 [CALL:/wiki {...}] 洩漏到用戶界面)
+                    clean_answer, parsed_title = sanitize_model_output(raw_answer)
+                    answer = clean_answer
                     
                     chat_history.append({"role": "user", "content": user_input})
                     chat_history.append({"role": "assistant", "content": answer})
                     context.user_data['chat_history'] = chat_history[-10:]
                     
-                    # 判斷是否為長篇深度分析或報告，若是則由 LLM 自動發布至 David888 Wiki
-                    is_report_request = any(k in user_input for k in ["分析", "報告", "研究", "整理", "比較", "架構", "教學", "report", "analysis", "guide", "overview"])
-                    if len(answer) >= 1200 or (is_report_request and len(answer) >= 600):
+                    # 判斷是否為 Wiki 寫作、長篇深度分析或報告，若是則由 LLM 自動發布至 David888 Wiki
+                    is_wiki_req = is_wiki_or_report_request(user_input)
+                    if is_wiki_req or len(answer) >= 1000:
                         try:
-                            wiki_res = await run_blocking(publish_wiki_page, answer, title=user_input[:25])
+                            wiki_title = parsed_title or user_input[:25]
+                            wiki_res = await run_blocking(publish_wiki_page, answer, title=wiki_title)
                             if wiki_res.get("success"):
                                 share_url = wiki_res.get("shareUrl")
                                 present_url = wiki_res.get("presentUrl")

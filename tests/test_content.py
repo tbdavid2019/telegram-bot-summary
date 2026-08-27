@@ -5,10 +5,32 @@ from app.services.content import (
     split_user_input,
     is_url,
     is_explicit_summary_request,
+    is_wiki_or_report_request,
+    sanitize_model_output,
 )
 
 
 class TestContentHelpers(unittest.TestCase):
+    def test_is_wiki_or_report_request(self):
+        self.assertTrue(is_wiki_or_report_request("你透過 david888 wiki 寫一個 英語對話給我。"))
+        self.assertTrue(is_wiki_or_report_request("請幫我寫一份市場分析報告"))
+        self.assertTrue(is_wiki_or_report_request("商務口說情境練習"))
+        self.assertFalse(is_wiki_or_report_request("你好！今天會下雨嗎？"))
+        self.assertFalse(is_wiki_or_report_request("1 + 1 等於多少"))
+
+    def test_sanitize_model_output_with_pseudo_tool_call(self):
+        raw_pseudo = '[CALL:/wiki {"slug":"biz-eng","title":"商務英語對話","content":"# 商務英語口說\\n\\n這是內容"}]'
+        clean, title = sanitize_model_output(raw_pseudo)
+        self.assertNotIn("[CALL:/wiki", clean)
+        self.assertIn("# 商務英語口說", clean)
+        self.assertEqual(title, "商務英語對話")
+
+    def test_sanitize_model_output_normal_text(self):
+        normal_text = "這是一般的 AI 回應，沒有任何工具標籤。"
+        clean, title = sanitize_model_output(normal_text)
+        self.assertEqual(clean, normal_text)
+        self.assertEqual(title, "")
+
     def test_is_explicit_summary_request(self):
         self.assertFalse(is_explicit_summary_request("你好"))
         self.assertFalse(is_explicit_summary_request("今天台北天氣如何？"))
