@@ -1,8 +1,13 @@
 # Changelog
 
-## [2026-08-27] - Natural AI Conversation, 888box Cloud Storage & Whisper Timestamps
+## [2026-08-27] - David888 Wiki Publisher, Natural AI Conversation, 888box & Whisper Timestamps
 
 ### ✨ Added & Improved
+- **David888 Wiki 知識庫整合 (`app/services/wiki.py`)**:
+  - 串接 `https://wiki.david888.com/api`，支援原生 Markdown 頁面發布、覆寫與讀取。
+  - 新增指令 `/wiki [標題/內容]`：一鍵將剛生成的 AI 摘要或自訂 Markdown 發布至 David888 Wiki，並回傳極美閱讀版 (`shareUrl`) 與簡報模式 (`presentUrl`)。
+  - 新增指令 `/wikiread <路徑>`：直接在 Telegram 讀取 Wiki 筆記與知識庫內容（支援長篇 Markdown 檔案傳送）。
+  - 支援主題自定義（預設 `tokyo-night`）。
 - **自然 AI 對話與智慧意圖分流 (Dual-Mode Chat & Summary)**:
   - 改善 Telegram Bot 訊息處理邏輯，不再將所有日常純文字強制套用 6 段式長文摘要格式。
   - 當用戶發送問候（如「你好」）、日常提問、程式開發諮詢或即時問答時，自動切換為自然流暢的 AI 對話模式。

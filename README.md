@@ -144,10 +144,26 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        🌐 主機位址：https://box.david888.com
 ```
 
+### 場景 10: David888 Wiki 一鍵發布與簡報模式
+```
+👤 用戶: /wiki
+🤖 Bot: 📚 【David888 Wiki 發布成功】
+
+       📝 頁面路徑：`summary-20260827-abc123`
+       🌐 閱讀頁面：https://wiki.david888.com/share/hzwna9
+       🖥️ 簡報模式：https://wiki.david888.com/share/hzwna9/present
+       🎨 套用主題：`tokyo-night`
+
+👤 用戶: /wikiread summary-20260827-abc123
+🤖 Bot: 📖 【Wiki 頁面內容：`summary-20260827-abc123`】
+       [顯示該 Wiki 頁面之 Markdown 原始內容]
+```
+
 ---
 
 ## 核心與新增功能
 
+- **David888 Wiki 知識庫發布**：整合 `https://wiki.david888.com/api`，支援一鍵將剛生成的 AI 摘要或自訂 Markdown 發布為 Wiki 知識庫頁面（`/wiki`），自動產出排版優美的公開閱讀連結與 Reveal 2D 簡報模式（`/present`），並支援遠端檢索讀取（`/wikiread`）。
 - **自然 AI 對話與智慧意圖分流**：日常打字（問候、編程諮詢、問題解答、隨意聊天）會以自然流暢的 AI 助理模式對話，並保留最近對話上下文；只有發送 URL、上傳文件或明確要求總結時，才會啟動結構化摘要。
 - **888box 雲端資產儲存庫**：整合 888box（主要節點：`https://box.david888.com`，自動備援節點：`https://box.glsoft.ai`、`https://box.aiurl.tw`），提供 `/box <URL> [標題]` 遠端轉存各類影片、音訊、文件、圖片，自動產出 CloudFront 高速 CDN 下載直鏈與 Web 分享頁面，並可用 `/boxstats` 即時查看儲存統計。
 - **AnyDoc 高效能文件解析**：採用 Firecrawl Rust 引擎 `firecrawl-anydoc`（取代 MarkItDown），支援 PDF、Word (DOCX)、Excel (XLSX)、PowerPoint (PPTX)、EPUB、RTF、CSV 等文件極速轉為 Markdown 進行摘要。
@@ -296,6 +312,8 @@ chmod +x setup_chrome_container.sh
 | /yt2text <URL> | 將影片轉成帶時間戳的逐字稿文字檔 (`.txt`) |
 | /box <URL> [標題] | 將遠端影片、音訊、圖片、文件轉存至 888box 雲端 |
 | /boxstats | 查看 888box 當前儲存的資產總數與分類統計 |
+| /wiki [標題/內容] | 發布至 David888 Wiki 知識庫 (產出公開好讀版與投影片) |
+| /wikiread <路徑> | 讀取 David888 Wiki 頁面內容 |
 
 ### 💡 使用技巧
 

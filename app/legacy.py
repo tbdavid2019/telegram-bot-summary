@@ -42,6 +42,11 @@ from app.services.box import (
     upload_url_to_box,
     get_box_stats,
 )
+from app.services.wiki import (
+    publish_wiki_page,
+    read_wiki_page,
+    append_wiki_page,
+)
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -1077,6 +1082,14 @@ async def handle_boxstats(update, context):
     """處理 888box 資產統計命令"""
     return await handle('boxstats', update, context)
 
+async def handle_wiki(update, context):
+    """處理發布至 David888 Wiki 命令"""
+    return await handle('wiki', update, context)
+
+async def handle_wikiread(update, context):
+    """處理讀取 David888 Wiki 命令"""
+    return await handle('wikiread', update, context)
+
 async def handle_language(update, context):
     """處理語言切換命令"""
     return await handle('language', update, context)
@@ -1325,6 +1338,8 @@ def set_my_commands(telegram_token):
         {"command": "yt2text", "description": "將影片轉成文字（支援 YouTube、Vimeo、Bilibili 等）"},
         {"command": "box", "description": "轉存 URL 至 888box 空間"},
         {"command": "boxstats", "description": "查看 888box 資產統計"},
+        {"command": "wiki", "description": "發布至 David888 Wiki 知識庫"},
+        {"command": "wikiread", "description": "讀取 David888 Wiki 頁面"},
     ]
     data = {"commands": commands}
     response = requests.post(url, json=data)
@@ -1366,6 +1381,8 @@ async def handle(action, update, context):
      /yiyu [模式] [問題] - 月老姻緣籤 / 生肖合婚指引
      /box <URL> [標題] - 轉存遠端資源至 888box
      /boxstats - 查看 888box 資產統計
+     /wiki [標題/內容] - 發布至 David888 Wiki 知識庫 (產出美麗好讀版與投影片)
+     /wikiread <路徑> - 讀取 David888 Wiki 頁面內容
      /context - Show current context (顯示對話上下文)
      /clear - Clear conversation history (清除對話歷史)
      /yt2audio <Video URL> - Download video audio (支援 YouTube、Vimeo、Bilibili 等)
@@ -1629,6 +1646,85 @@ async def handle(action, update, context):
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
             else:
                 await context.bot.send_message(chat_id=chat_id, text=reply)
+
+        elif action == 'wiki':
+            args = update.message.text.split(maxsplit=1)
+            provided_text = args[1].strip() if len(args) > 1 else ""
+            history = context.user_data.get('conversation_history')
+            
+            # 如果沒有提供內容，但有上一次生成的摘要，則發布該摘要
+            if not provided_text and history and history.get('summary'):
+                content = history.get('summary')
+                title = history.get('source_url', 'AI 內容摘要')
+            elif provided_text:
+                lines = provided_text.split('\n', 1)
+                title = lines[0].lstrip('#').strip()
+                content = lines[1].strip() if len(lines) > 1 else provided_text
+            else:
+                help_msg = (
+                    "📚 【David888 Wiki 知識庫發布工具】\n\n"
+                    "用法範例：\n"
+                    "• `/wiki`（直接將剛生成的摘要發布到 Wiki 好讀版）\n"
+                    "• `/wiki 我的文章標題\n內文...`（將自訂 Markdown 發布為 Wiki 頁面）\n"
+                    "• `/wikiread <路徑>`（讀取 Wiki 頁面內容）\n\n"
+                    "發布後自動產生美觀排版分享網址與簡報模式 (Slide Deck)！"
+                )
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_msg)
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=help_msg)
+                return
+
+            res = await run_blocking(publish_wiki_page, content, title=title)
+            if res.get("success"):
+                reply = (
+                    f"📚 【David888 Wiki 發布成功】\n\n"
+                    f"📝 頁面路徑：`{res.get('path')}`\n"
+                    f"🌐 閱讀頁面：{res.get('shareUrl')}\n"
+                    f"🖥️ 簡報模式：{res.get('presentUrl')}\n"
+                    f"🎨 套用主題：`tokyo-night`"
+                )
+            else:
+                reply = f"❌ Wiki 發布失敗：{res.get('error', '未知錯誤')}"
+
+            if processing_message:
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=reply)
+
+        elif action == 'wikiread':
+            args = update.message.text.split(maxsplit=1)
+            if len(args) < 2:
+                help_msg = "📖 請指定 Wiki 路徑，例如：`/wikiread test-page`"
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_msg)
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=help_msg)
+                return
+
+            path = args[1].strip().lstrip('/')
+            res = await run_blocking(read_wiki_page, path)
+            if res.get("success"):
+                content = res.get("content", "")
+                if len(content) <= 4000:
+                    reply = f"📖 【Wiki 頁面內容：`{path}`】\n\n{content}"
+                    if processing_message:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
+                    else:
+                        await context.bot.send_message(chat_id=chat_id, text=reply)
+                else:
+                    if processing_message:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=f"📖 【Wiki 頁面：`{path}`】（長篇內容已轉為檔案發送）")
+                    import io
+                    bio = io.BytesIO(content.encode('utf-8'))
+                    bio.name = f"{path}.md"
+                    await context.bot.send_document(chat_id=chat_id, document=bio, filename=f"{path}.md")
+            else:
+                reply = f"❌ 讀取 Wiki 頁面失敗：{res.get('error', '未知錯誤')}"
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=reply)
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=reply)
 
         # 修改 handle 函數中的 summarize 部分
         elif action == 'summarize':
@@ -1945,6 +2041,8 @@ async def main():
         yt2text_handler = CommandHandler('yt2text', handle_yt2text)
         box_handler = CommandHandler('box', handle_box)
         boxstats_handler = CommandHandler('boxstats', handle_boxstats)
+        wiki_handler = CommandHandler('wiki', handle_wiki)
+        wikiread_handler = CommandHandler('wikiread', handle_wikiread)
         set_my_commands(telegram_token)
         summarize_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize)
         file_handler = MessageHandler(filters.Document.ALL, handle_file)
@@ -1963,6 +2061,8 @@ async def main():
         application.add_handler(yinyuan_handler)
         application.add_handler(box_handler)
         application.add_handler(boxstats_handler)
+        application.add_handler(wiki_handler)
+        application.add_handler(wikiread_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

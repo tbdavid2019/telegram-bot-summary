@@ -61,6 +61,11 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
    - Backup 2: `https://box.aiurl.tw`
    - Use `app/services/box.py` for all file and URL uploads; always ensure automated fallback across these 3 nodes.
 
+5. **David888 Wiki Knowledge Base Publisher (`app/services/wiki.py`)**:
+   - Endpoint: `https://wiki.david888.com/api`
+   - **CRITICAL RULE**: Always deliver `shareUrl` (`https://wiki.david888.com/share/<shareId>`) or `presentUrl` (`<shareUrl>/present`) to users. Never give internal edit `url`.
+   - Default theme: `tokyo-night`.
+
 ---
 
 ## 🚀 4. Deployment Targets & Server Verification
