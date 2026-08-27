@@ -242,10 +242,11 @@ chmod +x setup_chrome_container.sh
 ## Features
 
 - **Supports text**：處理純文本。
-- **Supports URLs**：自動擷取網頁內容。
-- **Supports PDFs**：可解析 PDF 檔案。
+- **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura`）。
+- **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`，全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
 - **Supports 1000+ Video Websites**：處理來自 YouTube、Vimeo、Bilibili、TikTok、Twitch 等 1000+ 影片網站的字幕及聽寫。
 - **Whisper API**：自動轉錄無字幕的影片（需啟用 `USE_AUDIO_FALLBACK`）。
+- **Divination & Astrology**：內建塔羅牌占卜 (`/tarot`)、月老姻緣籤與生肖合婚 (`/yiyu`)。
 - **Email Summaries**：自動將生成的摘要發送到郵箱。
 - **Discord Webhook**：支援將摘要同步發送到 Discord 頻道。
 - **Smart URL Detection**：智能檢測影片 URL 並自動選擇最佳處理方式。
@@ -264,6 +265,8 @@ chmod +x setup_chrome_container.sh
 | /help | 顯示幫助訊息 |
 | /lang | 切換語言 (繁體中文 ⇄ English) |
 | /model | 切換/列出 LLM 模型 |
+| /tarot [牌陣] [問題] | 塔羅抽牌與 AI 深度解讀 (支援單張/三張/六角/塞爾特等牌陣) |
+| /yiyu [模式] [問題] | 月老姻緣求籤與生肖合婚契合度測算 |
 | /boa | 解答之書 Book of Answers |
 | /context | 顯示當前對話上下文 |
 | /clear | 清除對話歷史 |
@@ -272,7 +275,7 @@ chmod +x setup_chrome_container.sh
 
 ### 💡 使用技巧
 
-1. **直接發送內容**: 文字、URL、PDF 都可以直接發送，無需命令
+1. **直接發送內容**: 文字、網址、各類文件檔案（PDF、Word、Excel、PPT、EPUB、CSV、TXT）直接拖曳傳送即可自動摘要，無需輸入命令。
 2. **續問功能**: 完成摘要後，直接發送問題即可續問
 3. **語言切換**: 使用 `/lang` 切換語言後，之後的摘要都使用新語言
 4. **多輪對話**: 系統自動保留最近 3 輪對話，支援深入討論
