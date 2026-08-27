@@ -148,6 +148,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 ## 核心與新增功能
 
+- **自然 AI 對話與智慧意圖分流**：日常打字（問候、編程諮詢、問題解答、隨意聊天）會以自然流暢的 AI 助理模式對話，並保留最近對話上下文；只有發送 URL、上傳文件或明確要求總結時，才會啟動結構化摘要。
 - **888box 雲端資產儲存庫**：整合 `https://box.david888.com`，提供 `/box <URL> [標題]` 遠端轉存各類影片、音訊、文件、圖片，自動產出 CloudFront 高速 CDN 下載直鏈與 Web 分享頁面，並可用 `/boxstats` 即時查看儲存統計。
 - **AnyDoc 高效能文件解析**：採用 Firecrawl Rust 引擎 `firecrawl-anydoc`（取代 MarkItDown），支援 PDF、Word (DOCX)、Excel (XLSX)、PowerPoint (PPTX)、EPUB、RTF、CSV 等文件極速轉為 Markdown 進行摘要。
 - **塔羅占卜 (`/tarot`)**：支援單張、三張牌、鑽石、月亮、馬蹄鐵、塞爾特十字牌陣，提供抽牌正逆位展示與 AI 深度解牌指引。

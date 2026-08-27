@@ -25,6 +25,7 @@ from app.services.content import (
     convert_document_to_markdown,
     format_timestamp,
     format_whisper_segments,
+    is_explicit_summary_request,
 )
 from app.services.divination import (
     parse_tarot_command,
@@ -1393,23 +1394,26 @@ async def handle(action, update, context):
                 reply_markup=reply_markup
             )
         elif action == 'clear_context':
-            # 清除對話歷史
+            # 清除對話歷史（包含摘要上下文與日常聊天）
             context.user_data['conversation_history'] = None
+            context.user_data['chat_history'] = None
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=processing_message.message_id,
-                text="✅ 對話歷史已清除。下一次輸入將開始新的摘要。\nConversation history cleared. Next input will start a new summary."
+                text="✅ 對話歷史已清除。下一次輸入將開始全新的對話或摘要。\nConversation history cleared."
             )
         elif action == 'show_context':
             # 顯示當前對話上下文
             history = context.user_data.get('conversation_history')
-            if history:
-                info_text = f"📋 當前對話上下文 / Current Context:\n\n"
-                info_text += f"🔗 來源 Source: {history.get('source_url', 'N/A')}\n"
-                info_text += f"📅 時間 Time: {history.get('timestamp', 'N/A')}\n"
-                info_text += f"💬 問答輪數 Q&A rounds: {len(history.get('messages', []))}\n"
-                info_text += f"📝 內容長度 Content length: {len(history.get('original_content', []))} paragraphs\n\n"
-                info_text += "你可以繼續提問或發送新的 URL 開始新摘要。\nYou can continue asking or send a new URL to start fresh."
+            chat_history = context.user_data.get('chat_history') or []
+            if history or chat_history:
+                info_text = "📋 當前對話上下文 / Current Context:\n\n"
+                if history:
+                    info_text += f"📄 摘要來源: {history.get('source_url', 'N/A')}\n"
+                    info_text += f"💬 摘要續問問答輪數: {len(history.get('messages', [])) // 2}\n"
+                if chat_history:
+                    info_text += f"💬 日常對話輪數: {len(chat_history) // 2}\n"
+                info_text += "\n你可以直接打字聊天、繼續提問，或發送 URL 進行摘要。\nYou can continue chatting or send a new URL to summarize."
             else:
                 info_text = "📭 目前沒有對話歷史。\nNo conversation history available."
             
@@ -1631,9 +1635,9 @@ async def handle(action, update, context):
             try:
                 user_input = update.message.text
                 
-                # 檢查是否為續問
+                # 1. 檢查是否為摘要續問
                 history = context.user_data.get('conversation_history')
-                if history and not is_url(user_input) and len(user_input) < 500:
+                if history and not is_url(user_input) and len(user_input) < 500 and not is_explicit_summary_request(user_input):
                     # 處理續問
                     language = context.user_data.get('language', 'zh-TW')
                     
@@ -1666,12 +1670,53 @@ async def handle(action, update, context):
                     context.user_data['conversation_history'] = history
                     
                     if show_processing and processing_message:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                        except Exception:
+                            pass
                     
-                    await context.bot.send_message(chat_id=chat_id, text=f"💬 續問回答:\n\n{answer}")
+                    if len(answer) <= 4000:
+                        await context.bot.send_message(chat_id=chat_id, text=f"💬 續問回答:\n\n{answer}")
+                    else:
+                        for i in range(0, len(answer), 4000):
+                            await context.bot.send_message(chat_id=chat_id, text=answer[i:i+4000])
                     return
-                
-                # 正常的摘要流程
+
+                # 2. 如果不是 URL 且非明確摘要指令 -> 進入日常自然對話與 AI 問答模式
+                if not is_url(user_input) and not is_explicit_summary_request(user_input):
+                    chat_history = context.user_data.get('chat_history') or []
+                    language = context.user_data.get('language', 'zh-TW')
+                    sys_lang = "繁體中文 (Traditional Chinese)" if language == 'zh-TW' else "English"
+                    system_prompt = (
+                        f"You are a helpful, friendly, and highly intelligent AI assistant. "
+                        f"Respond naturally, concisely, and accurately in {sys_lang}. "
+                        f"Support markdown formatting for code, lists, and bold text when helpful."
+                    )
+                    messages = [{"role": "system", "content": system_prompt}]
+                    for msg in chat_history[-6:]:
+                        messages.append(msg)
+                    
+                    selected_model = context.user_data.get('selected_model', None)
+                    answer = await run_blocking(call_gpt_api, user_input, messages, selected_model=selected_model)
+                    
+                    chat_history.append({"role": "user", "content": user_input})
+                    chat_history.append({"role": "assistant", "content": answer})
+                    context.user_data['chat_history'] = chat_history[-10:]
+                    
+                    if show_processing and processing_message:
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                        except Exception:
+                            pass
+                    
+                    if len(answer) <= 4000:
+                        await context.bot.send_message(chat_id=chat_id, text=answer)
+                    else:
+                        for i in range(0, len(answer), 4000):
+                            await context.bot.send_message(chat_id=chat_id, text=answer[i:i+4000])
+                    return
+
+                # 3. 正常的長文或 URL 摘要流程
                 text_array = await run_blocking(process_user_input, user_input)
                 
                 # 檢查是否為已知的錯誤訊息

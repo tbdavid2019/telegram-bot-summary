@@ -59,3 +59,22 @@ def format_whisper_segments(response_json: dict, offset_seconds: float = 0.0) ->
     if raw_text:
         return f"[{format_timestamp(offset_seconds)}] {raw_text}\n"
     return ""
+
+
+def is_explicit_summary_request(text: str) -> bool:
+    """Check if plain text explicitly requests a structured article summary or is a pasted long article."""
+    t = text.strip()
+    if not t:
+        return False
+    summary_prefixes = (
+        "總結", "摘要", "請總結", "幫我總結", "請摘要", "幫我摘要",
+        "做個總結", "文章摘要", "內容摘要", "重點整理",
+        "tldr", "tl;dr", "summarize", "summary:"
+    )
+    first_line = t.split("\n", 1)[0].strip().lower()
+    for kw in summary_prefixes:
+        if first_line.startswith(kw) or first_line.endswith(kw):
+            return True
+    if len(t) >= 600 and ("\n\n" in t or t.count("。") >= 4):
+        return True
+    return False

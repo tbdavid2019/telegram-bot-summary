@@ -1,8 +1,13 @@
 # Changelog
 
-## [2026-08-27] - 888box Cloud Asset Storage & Whisper ASR Timestamps
+## [2026-08-27] - Natural AI Conversation, 888box Cloud Storage & Whisper Timestamps
 
 ### ✨ Added & Improved
+- **自然 AI 對話與智慧意圖分流 (Dual-Mode Chat & Summary)**:
+  - 改善 Telegram Bot 訊息處理邏輯，不再將所有日常純文字強制套用 6 段式長文摘要格式。
+  - 當用戶發送問候（如「你好」）、日常提問、程式開發諮詢或即時問答時，自動切換為自然流暢的 AI 對話模式。
+  - 智慧保留多輪對話上下文（`chat_history`），支援上下文連貫聊天。
+  - 當用戶發送網址（URL）、上傳檔案、或輸入帶有「總結/摘要/TLDR」關鍵字與超長文章時，則精準啟動完整結構化摘要。
 - **888box 雲端資產儲存庫整合 (`app/services/box.py`)**:
   - 串接 `https://box.david888.com/api.php`，支援本機檔案上傳 (`upload`) 與遠端 URL 轉存 (`upload_url`)。
   - 自動生成 CloudFront CDN 高速下載直鏈與 888box Web 分享頁面。

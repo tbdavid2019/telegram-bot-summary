@@ -1,8 +1,23 @@
 import unittest
-from app.services.content import format_timestamp, format_whisper_segments, split_user_input, is_url
+from app.services.content import (
+    format_timestamp,
+    format_whisper_segments,
+    split_user_input,
+    is_url,
+    is_explicit_summary_request,
+)
 
 
 class TestContentHelpers(unittest.TestCase):
+    def test_is_explicit_summary_request(self):
+        self.assertFalse(is_explicit_summary_request("你好"))
+        self.assertFalse(is_explicit_summary_request("今天台北天氣如何？"))
+        self.assertFalse(is_explicit_summary_request("幫我寫一段 Python 排序代碼"))
+        self.assertTrue(is_explicit_summary_request("總結這篇：機器學習很棒。"))
+        self.assertTrue(is_explicit_summary_request("請摘要以下重點：\n1. A\n2. B"))
+        self.assertTrue(is_explicit_summary_request("TLDR: this is a summary"))
+        self.assertTrue(is_explicit_summary_request("幫我總結"))
+
     def test_format_timestamp_seconds_and_minutes(self):
         self.assertEqual(format_timestamp(0), "00:00")
         self.assertEqual(format_timestamp(5), "00:05")
