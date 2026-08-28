@@ -3,6 +3,7 @@ from pydub import AudioSegment
 import subprocess
 import json
 import os
+import shutil
 import re
 import trafilatura
 import uuid
@@ -389,7 +390,8 @@ def get_ytdlp_cookie_opts():
     """
     Dynamically determine the best available cookie configuration for yt-dlp.
     1. First priority: Chrome browser profile (/chrome-data/.config/google-chrome) if directory exists.
-    2. Second priority: Netscape cookies.txt file (/app/cookies.txt, cookies.txt, /cookies.txt) if file exists and non-empty.
+    2. Second priority: Netscape cookies.txt file (/app/cookies.txt, cookies.txt, /cookies.txt).
+       Copies to /tmp/ytdlp_cookies.txt to guarantee write permissions if volume is mounted read-only.
     3. Fallback: No cookie option (empty dict) so yt-dlp won't crash when chrome database is absent.
     """
     chrome_profile = '/chrome-data/.config/google-chrome'
@@ -398,7 +400,13 @@ def get_ytdlp_cookie_opts():
     
     for candidate in ['/app/cookies.txt', 'cookies.txt', '/cookies.txt']:
         if os.path.isfile(candidate) and os.path.getsize(candidate) > 10:
-            return {'cookiefile': candidate}
+            tmp_cookie = '/tmp/ytdlp_cookies.txt'
+            try:
+                shutil.copyfile(candidate, tmp_cookie)
+                os.chmod(tmp_cookie, 0o666)
+                return {'cookiefile': tmp_cookie}
+            except Exception:
+                return {'cookiefile': candidate}
             
     return {}
 
