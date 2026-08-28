@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-08-28] - Quick Reply Interactive Menu, 5-Part Structured Summary & Visual Concept Art
+
+### ✨ Added & Improved
+- **🎛️ 底部 Quick Reply 互動選單 (Inline Interactive Keyboard)**:
+  - 獨立封裝 `app/services/quick_reply.py` 模組，於每次影音、文件、文章摘要後自動掛載 6 大隨點隨切快捷按鈕：
+    - `⚡ 1分鐘極簡版`：提煉 3 句超精華結論 + 關鍵數據。
+    - `📊 結構化大綱`：梳理樹狀階層與心智圖大綱。
+    - `❓ 核心 Q&A`：拆解 5 個高含金量問答（Q1~Q5）。
+    - `📱 社群貼文風`：轉換為自帶 Hook、Emoji 與 Hashtags 的高傳播力社群文案。
+    - `🎨 繪製概念圖`：自動生成主題英文視覺 Prompt 並調用 Flux 生圖直接回傳高畫質圖片。
+    - `📚 發布至 Wiki`：一鍵發布至 David888 Wiki 產生好讀版與投影片模式。
+- **⚡ 5 段式結構化摘要升級 + 💡 推薦延伸續問**:
+  - 全新設計繁中與英文 System Prompt，標準輸出：容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個啟發性延伸續問、Hashtags。
+- **💬 自然語言風格無縫切換 (Natural Language Style Intent Detection)**:
+  - 聊天室直接輸入「轉社群風」、「給我大綱」、「1分鐘版」、「問答」、「生圖」或針對內容提出深入續問，系統自動基於前次摘要上下文無縫切換或答覆。
+
 ## [2026-08-27] - LLM Autonomous Wiki Publishing, Rich Greetings & Multi-Service Integration
 
 ### ✨ Added & Improved

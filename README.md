@@ -159,10 +159,35 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        [顯示該 Wiki 頁面之 Markdown 原始內容]
 ```
 
+### 場景 11: 🎛️ 底部 Quick Reply 互動選單與自然語言風格切換
+```
+👤 用戶: [傳送 YouTube 影片或新聞文章 URL]
+🤖 Bot: 📌 [影片標題]
+       
+       ① 【容易懂 Easy Know】...
+       ② 【總結 Overall Summary】...
+       ③ 【觀點與評論 Viewpoints】...
+       ④ 【重點條列 Key Points】...
+       ⑤ 【測驗三題 3-Question Quiz】...
+       💡 【推薦延伸續問 Suggested Follow-ups】
+          1. ... 2. ... 3. ...
+       ⓺ 【關鍵標籤 Hashtags】
+       
+       [按鈕: ⚡ 1分鐘極簡版]  [按鈕: 📊 結構化大綱]
+       [按鈕: ❓ 核心 Q&A]     [按鈕: 📱 社群貼文風]
+       [按鈕: 🎨 繪製概念圖]  [按鈕: 📚 發布至 Wiki]
+
+👤 用戶: [點擊 📱 社群貼文風] 或 直接輸入「轉成社群貼文」
+🤖 Bot: 🔥【這部影片徹底顛覆了我對 AI 的想像！】
+       ...[社群爆款 Hook + 重點條列 + Emoji + Hashtags]
+```
+
 ---
 
 ## 核心與新增功能
 
+- **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！
+- **⚡ 5 段式結構化摘要與推薦續問**：標準產出容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個深入續問問題，兼具深度與互動性。
 - **David888 Wiki 知識庫發布（LLM 深度報告好讀版）**：整合 `https://wiki.david888.com/api`，當使用者交代 LLM 撰寫長篇分析報告時，LLM 會自動將完整 Markdown 發布至 David888 Wiki，並回傳排版優美的公開閱讀連結（`shareUrl`）與 Reveal 2D 簡報模式（`presentUrl`）；亦可透過 `/wiki` 手動一鍵發布或 `/wikiread` 遠端讀取。
 - **自然 AI 對話與智慧意圖分流**：日常打字（問候、編程諮詢、問題解答、隨意聊天）會以自然流暢的 AI 助理模式對話，並保留最近對話上下文；只有發送 URL、上傳文件或明確要求總結時，才會啟動結構化摘要。
 - **888box 雲端資產儲存庫**：整合 888box（主要節點：`https://box.david888.com`，自動備援節點：`https://box.glsoft.ai`、`https://box.aiurl.tw`），提供 `/box <URL> [標題]` 遠端轉存各類影片、音訊、文件、圖片，自動產出 CloudFront 高速 CDN 下載直鏈與 Web 分享頁面，並可用 `/boxstats` 即時查看儲存統計。

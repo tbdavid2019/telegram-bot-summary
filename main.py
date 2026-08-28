@@ -50,6 +50,12 @@ from app.services.wiki import (
     read_wiki_page,
     append_wiki_page,
 )
+from app.services.quick_reply import (
+    get_summary_quick_reply_keyboard,
+    detect_quick_reply_intent,
+    build_transform_prompt,
+    build_concept_image_url,
+)
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -234,26 +240,28 @@ SUPPORTED_LANGUAGES = {
 
 # 繁體中文 System Prompt
 SYSTEM_PROMPT_ZH = (
-    "請將以下原始影片內容總結為六個部分，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。六個部分之間請用分隔線區隔。\n\n"
-    "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結影片的核心知識內容。\n\n"
-    "### ⓵ 【容易懂 Easy Know】\n使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲兒童理解**。可使用比喻或簡化類比幫助理解。\n\n"
-    "### ⓶ 【總結 Overall Summary】\n撰寫約**300字以上**的摘要，完整概括影片的**主要議題、論點與結論**，語氣務實、清楚，避免艱澀詞彙。\n\n"
-    "### ⓷ 【觀點 Viewpoints】\n列出影片中提到的**3～7個主要觀點**，每點以清單（List）方式呈現，並可加入簡短評論或補充說明。\n\n"
-    "### ⓸ 【摘要 Abstract】\n列出**6～10個關鍵重點句**，每點簡短有力，作為清單項目，適當搭配合適的表情符號（如✅、⚠️、📌）以強調重點資訊。\n\n"
-    "### ⓹ 【FAQ 測驗】\n根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解釋。題目應涵蓋內容的重要概念或關鍵知識點。\n\n"
+    "請將以下原始內容總結為結構化報告，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。各部分之間請用分隔線區隔。\n\n"
+    "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結核心知識內容。\n\n"
+    "### ⓵ 【容易懂 Easy Know】\n使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲理解**。可使用生動比喻或生活情境幫助秒懂。\n\n"
+    "### ⓶ 【總結 Overall Summary】\n撰寫約**300字以上**的精華摘要，完整概括內容的**主要核心主旨、背景脈絡與總結結論**，語氣務實客觀。\n\n"
+    "### ⓷ 【觀點與評論 Viewpoints】\n列出內容中提到的**3～7個主要核心觀點與深度見解**，每點以清單（List）方式呈現，並附上深入評論或延伸意涵。\n\n"
+    "### ⓸ 【重點條列 Key Points】\n列出**6～10個關鍵重點句與核心數據**，每點簡短有力，作為清單項目，適當搭配表情符號（如✅、⚠️、📌、📊）以強調關鍵事實。\n\n"
+    "### ⓹ 【測驗三題 3-Question Quiz】\n根據內容產出**三題選擇題**，每題有 A、B、C、D 四個選項，並在每題後附上正確答案及簡短解析，檢驗並鞏固核心知識點。\n\n"
+    "### 💡 【推薦延伸續問 Suggested Follow-ups】\n根據內容延伸出 **3 個最具啟發性與含金量的深入續問問題**（以 1. 2. 3. 條列），提示用戶可直接於對話中點擊或輸入提問。\n\n"
     "### ⓺ 【關鍵標籤 Hashtags】\n請根據以上摘要，精煉出 5 個最重要的核心概念標籤。格式為傳統的井號標籤（例如：「#標籤1 #標籤2 #標籤3 #標籤4 #標籤5」），確保完全使用繁體中文，且各標籤之間以半形空格分隔。\n\n"
 )
 
 # 英文 System Prompt
 SYSTEM_PROMPT_EN = (
-    "Please summarize the following content into six sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
-    "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content of the video.\n\n"
-    "### ⓵ 【Easy Know】\nUse simple, accessible language to condense the content into approximately 120-200 words, suitable for a twelve-year-old to understand. Use analogies or simplified comparisons to aid comprehension.\n\n"
-    "### ⓶ 【Overall Summary】\nWrite a summary of approximately 300 words or more, comprehensively covering the **main topics, arguments, and conclusions**. Use a practical and clear tone, avoiding obscure vocabulary.\n\n"
-    "### ⓷ 【Viewpoints】\nList **3-7 main viewpoints** mentioned in the content. Present each point in list form, and add brief comments or supplementary explanations.\n\n"
-    "### ⓸ 【Abstract】\nList **6-10 key highlight sentences** as a list. Each point should be brief and powerful, prefixed with appropriate emoji symbols (such as ✅, ⚠️, 📌) to emphasize key information.\n\n"
-    "### ⓹ 【FAQ Quiz】\nGenerate **three multiple-choice questions** based on the content. Each question should have A, B, C, D options, followed by the correct answer and a brief explanation. Questions should cover important concepts or key knowledge points from the content.\n\n"
-    "### ⓺ 【Hashtags】\nPlease extract 5 core concept hashtags based on the summary above. The format should be standard hashtags (e.g., \"#Tag1 #Tag2 #Tag3 #Tag4 #Tag5\"), ensuring all tags are in English and separated by a half-width space.\n\n"
+    "Please summarize the following content into structured sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
+    "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content.\n\n"
+    "### ⓵ 【Easy Know】\nUse simple, accessible language to condense the content into approximately 120-200 words, suitable for quick comprehension. Use vivid analogies to aid understanding.\n\n"
+    "### ⓶ 【Overall Summary】\nWrite a comprehensive summary of approximately 300 words or more, covering the **main topics, arguments, and conclusions**.\n\n"
+    "### ⓷ 【Viewpoints】\nList **3-7 main viewpoints and insights** mentioned in the content. Present each point in list form with brief commentary.\n\n"
+    "### ⓸ 【Key Points】\nList **6-10 key highlight sentences and core data** as a list with appropriate emojis (such as ✅, ⚠️, 📌, 📊).\n\n"
+    "### ⓹ 【3-Question Quiz】\nGenerate **three multiple-choice questions** (A, B, C, D options) followed by the correct answer and explanation to reinforce key takeaways.\n\n"
+    "### 💡 【Suggested Follow-ups】\nProvide **3 thought-provoking follow-up questions** (numbered 1. 2. 3.) that the user can explore next.\n\n"
+    "### ⓺ 【Hashtags】\nExtract 5 core concept hashtags (e.g., \"#Tag1 #Tag2 #Tag3 #Tag4 #Tag5\"), in English separated by spaces.\n\n"
 )
 
 
@@ -1145,7 +1153,105 @@ async def handle_button_click(update, context):
             )
         return
     
-    # 其他按鈕處理可以在這裡添加
+    # 處理摘要快捷切換按鈕 (Quick Reply Actions)
+    if query.data.startswith('quick_'):
+        action_type = query.data[6:]  # '1min', 'outline', 'qa', 'social', 'image', 'wiki'
+        history = context.user_data.get('conversation_history')
+        if not history:
+            await query.message.reply_text("⚠️ 目前沒有可轉換的摘要記錄，請先傳送網址或檔案進行摘要。")
+            return
+
+        chat_id = update.effective_chat.id
+        language = context.user_data.get('language', 'zh-TW')
+        selected_model = context.user_data.get('selected_model', None)
+        raw_content = "\n".join(history.get('original_content', [])) if history.get('original_content') else history.get('summary', '')
+
+        # 1. 概念生圖 (Concept Art Generation)
+        if action_type == 'image':
+            status_msg = await query.message.reply_text("🎨 正在為您構思並繪製概念圖，請稍候...")
+            try:
+                prompt_task = (
+                    "Based on the following content, generate a concise, high-impact English visual prompt (under 35 words) "
+                    "for generating a concept art illustration that captures the central essence of this topic. "
+                    "Only output the visual prompt directly without quotes:\n\n" + raw_content[:2000]
+                )
+                image_prompt = await run_blocking(call_gpt_api, prompt_task, [{"role": "system", "content": "You are a visual concept prompt designer."}], selected_model=selected_model)
+                clean_prompt = image_prompt.strip().strip('"').strip("'")
+                image_url = build_concept_image_url(clean_prompt)
+                
+                caption = (
+                    f"🎨 **【AI 主題概念圖】**\n\n"
+                    f"💡 **視覺概念**：`{clean_prompt}`\n\n"
+                    f"點擊下方按鈕可繼續切換不同摘要視角 👇"
+                )
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+                except Exception:
+                    pass
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=image_url,
+                    caption=caption,
+                    parse_mode='Markdown',
+                    reply_markup=get_summary_quick_reply_keyboard()
+                )
+            except Exception as e:
+                print(f"[ERROR] Generate concept image failed: {e}")
+                await status_msg.edit_text(f"❌ 繪製概念圖時發生錯誤：{str(e)}")
+            return
+
+        # 2. 發布至 David888 Wiki
+        if action_type == 'wiki':
+            status_msg = await query.message.reply_text("📚 正在發布至 David888 Wiki 知識庫...")
+            try:
+                title = history.get('source_url', 'AI 內容深度解析')
+                content_to_publish = history.get('summary', '')
+                wiki_res = await run_blocking(publish_wiki_page, content_to_publish, title=title)
+                if wiki_res.get("success"):
+                    reply = (
+                        f"📚 **【David888 Wiki 發布成功】**\n\n"
+                        f"📝 頁面路徑：`{wiki_res.get('path')}`\n"
+                        f"🌐 線上好讀版：{wiki_res.get('shareUrl')}\n"
+                        f"🖥️ 投影片模式：{wiki_res.get('presentUrl')}\n"
+                        f"🎨 排版主題：`tokyo-night`"
+                    )
+                else:
+                    reply = f"❌ Wiki 發布失敗：{wiki_res.get('error', '未知錯誤')}"
+                await status_msg.edit_text(reply, parse_mode='Markdown', reply_markup=get_summary_quick_reply_keyboard())
+            except Exception as e:
+                await status_msg.edit_text(f"❌ Wiki 發布失敗：{str(e)}")
+            return
+
+        # 3. 文本風格轉換 (1min, outline, qa, social)
+        status_msg = await query.message.reply_text("⚡ 正在快速整理轉換中，請稍候...")
+        try:
+            sys_p, usr_p = build_transform_prompt(action_type, raw_content, language=language)
+            transformed = await run_blocking(call_gpt_api, usr_p, [{"role": "system", "content": sys_p}], selected_model=selected_model)
+            
+            # 保存到對話歷史
+            history['messages'].append({"role": "user", "content": f"轉換風格: {action_type}"})
+            history['messages'].append({"role": "assistant", "content": transformed})
+            context.user_data['conversation_history'] = history
+            
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+            except Exception:
+                pass
+
+            if len(transformed) <= 4000:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=transformed,
+                    reply_markup=get_summary_quick_reply_keyboard()
+                )
+            else:
+                for i in range(0, len(transformed), 4000):
+                    markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
+                    await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
+        except Exception as e:
+            print(f"[ERROR] Transform style failed: {e}")
+            await status_msg.edit_text(f"❌ 轉換時發生錯誤：{str(e)}")
+        return
 
 def download_video_audio(url):
     """Download and convert audio synchronously; callers must offload this work."""
@@ -1745,36 +1851,95 @@ async def handle(action, update, context):
             try:
                 user_input = update.message.text
                 
-                # 1. 檢查是否為摘要續問
+                # 1. 檢查是否為摘要續問或風格快速切換
                 history = context.user_data.get('conversation_history')
                 if is_conversation_followup(user_input, history):
-                    # 處理續問
                     language = context.user_data.get('language', 'zh-TW')
-                    
-                    # 構建對話歷史
+                    selected_model = context.user_data.get('selected_model', None)
+                    raw_content = "\n".join(history.get('original_content', [])) if history.get('original_content') else history.get('summary', '')
+
+                    # 檢查是否為自然語言風格轉換指令 (如：轉成社群貼文、給我大綱、1分鐘版、生圖、發布到wiki)
+                    quick_intent = detect_quick_reply_intent(user_input)
+                    if quick_intent:
+                        if quick_intent == 'image':
+                            if show_processing and processing_message:
+                                try:
+                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                                except Exception:
+                                    pass
+                            prompt_task = (
+                                "Based on the following content, generate a concise, high-impact English visual prompt (under 35 words) "
+                                "for generating a concept art illustration that captures the central essence of this topic. "
+                                "Only output the visual prompt directly without quotes:\n\n" + raw_content[:2000]
+                            )
+                            image_prompt = await run_blocking(call_gpt_api, prompt_task, [{"role": "system", "content": "You are a visual concept prompt designer."}], selected_model=selected_model)
+                            clean_prompt = image_prompt.strip().strip('"').strip("'")
+                            image_url = build_concept_image_url(clean_prompt)
+                            caption = (
+                                f"🎨 **【AI 主題概念圖】**\n\n"
+                                f"💡 **視覺概念**：`{clean_prompt}`\n\n"
+                                f"點擊下方按鈕可繼續切換不同摘要視角 👇"
+                            )
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=image_url,
+                                caption=caption,
+                                parse_mode='Markdown',
+                                reply_markup=get_summary_quick_reply_keyboard()
+                            )
+                            return
+                        elif quick_intent == 'wiki':
+                            if show_processing and processing_message:
+                                try:
+                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                                except Exception:
+                                    pass
+                            title = history.get('source_url', 'AI 內容深度解析')
+                            content_to_publish = history.get('summary', '')
+                            wiki_res = await run_blocking(publish_wiki_page, content_to_publish, title=title)
+                            if wiki_res.get("success"):
+                                reply = (
+                                    f"📚 **【David888 Wiki 發布成功】**\n\n"
+                                    f"📝 頁面路徑：`{wiki_res.get('path')}`\n"
+                                    f"🌐 線上好讀版：{wiki_res.get('shareUrl')}\n"
+                                    f"🖥️ 投影片模式：{wiki_res.get('presentUrl')}\n"
+                                    f"🎨 排版主題：`tokyo-night`"
+                                )
+                            else:
+                                reply = f"❌ Wiki 發布失敗：{wiki_res.get('error', '未知錯誤')}"
+                            await context.bot.send_message(chat_id=chat_id, text=reply, parse_mode='Markdown', reply_markup=get_summary_quick_reply_keyboard())
+                            return
+                        else:
+                            sys_p, usr_p = build_transform_prompt(quick_intent, raw_content, language=language)
+                            transformed = await run_blocking(call_gpt_api, usr_p, [{"role": "system", "content": sys_p}], selected_model=selected_model)
+                            history['messages'].append({"role": "user", "content": user_input})
+                            history['messages'].append({"role": "assistant", "content": transformed})
+                            context.user_data['conversation_history'] = history
+                            if show_processing and processing_message:
+                                try:
+                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                                except Exception:
+                                    pass
+                            if len(transformed) <= 4000:
+                                await context.bot.send_message(chat_id=chat_id, text=transformed, reply_markup=get_summary_quick_reply_keyboard())
+                            else:
+                                for i in range(0, len(transformed), 4000):
+                                    markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
+                                    await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
+                            return
+
+                    # 處理一般深入續問
                     messages = [
                         {"role": "system", "content": "You are a helpful assistant that answers questions about previously summarized content."}
                     ]
-                    
-                    # 添加原始內容
-                    original_content = "\n".join(history.get('original_content', []))
-                    messages.append({"role": "user", "content": f"Original content:\n{original_content[:3000]}"})  # 限制長度
-                    
-                    # 添加摘要
+                    messages.append({"role": "user", "content": f"Original content:\n{raw_content[:3000]}"})
                     messages.append({"role": "assistant", "content": f"Summary:\n{history.get('summary', '')[:2000]}"})
-                    
-                    # 添加之前的對話
-                    for msg in history.get('messages', [])[-3:]:  # 只保留最近3輪對話
+                    for msg in history.get('messages', [])[-3:]:
                         messages.append(msg)
-                    
-                    # 添加當前問題
                     messages.append({"role": "user", "content": user_input})
                     
-                    # 呼叫 API (使用用戶選擇的模型)
-                    selected_model = context.user_data.get('selected_model', None)
-                    answer = await run_blocking(call_gpt_api, user_input, messages[:-1], selected_model=selected_model)  # messages[:-1] 因為 call_gpt_api 會自己添加最後的 user message
+                    answer = await run_blocking(call_gpt_api, user_input, messages[:-1], selected_model=selected_model)
                     
-                    # 保存對話歷史
                     history['messages'].append({"role": "user", "content": user_input})
                     history['messages'].append({"role": "assistant", "content": answer})
                     context.user_data['conversation_history'] = history
@@ -1786,10 +1951,11 @@ async def handle(action, update, context):
                             pass
                     
                     if len(answer) <= 4000:
-                        await context.bot.send_message(chat_id=chat_id, text=f"💬 續問回答:\n\n{answer}")
+                        await context.bot.send_message(chat_id=chat_id, text=f"💬 續問回答:\n\n{answer}", reply_markup=get_summary_quick_reply_keyboard())
                     else:
                         for i in range(0, len(answer), 4000):
-                            await context.bot.send_message(chat_id=chat_id, text=answer[i:i+4000])
+                            markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(answer)) else None
+                            await context.bot.send_message(chat_id=chat_id, text=answer[i:i+4000], reply_markup=markup)
                     return
 
                 # 2. 如果不是 URL 且非明確摘要指令 -> 進入日常自然對話與 AI 問答模式
@@ -1942,17 +2108,20 @@ async def handle(action, update, context):
                     
                     if len(formatted_summary) > 4000:
                         parts = [formatted_summary[i:i+4000] for i in range(0, len(formatted_summary), 4000)]
-                        for part in parts:
+                        for idx, part in enumerate(parts):
+                            markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
                             await context.bot.send_message(
                                 chat_id=chat_id,
                                 text=part,
-                                parse_mode='HTML'
+                                parse_mode='HTML',
+                                reply_markup=markup
                             )
                     else:
                         await context.bot.send_message(
                             chat_id=chat_id,
                             text=formatted_summary,
-                            parse_mode='HTML'
+                            parse_mode='HTML',
+                            reply_markup=get_summary_quick_reply_keyboard()
                         )
                 else:
                     await context.bot.send_message(
@@ -2027,18 +2196,29 @@ async def handle(action, update, context):
                     except Exception as e:
                         print(f"[DEBUG] 刪除 processing_message 失敗: {e}")
 
+                # 保存對話歷史到 context.user_data，支援續問與快捷風格轉換
+                context.user_data['conversation_history'] = {
+                    'original_content': [text],
+                    'summary': summary,
+                    'source_url': filename or 'uploaded file',
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'messages': [],
+                    'language': language
+                }
+
                 # 發送 PDF 摘要到 Discord Webhook（如果啟用）
                 if enable_discord_webhook:
-                    discord_message = f"🔔 已成功處理一份 PDF 文件，摘要內容如下：\n{summary}"
+                    discord_message = f"🔔 已成功處理一份文件，摘要內容如下：\n{summary}"
                     await run_blocking(send_to_discord, discord_message)
 
-                # 分批發送摘要
+                # 分批發送摘要並附帶 Quick Reply 按鈕
                 if len(summary) > 4000:
                     parts = [summary[i:i+4000] for i in range(0, len(summary), 4000)]
-                    for part in parts:
-                        await context.bot.send_message(chat_id=chat_id, text=part)
+                    for idx, part in enumerate(parts):
+                        markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
+                        await context.bot.send_message(chat_id=chat_id, text=part, reply_markup=markup)
                 else:
-                    await context.bot.send_message(chat_id=chat_id, text=summary)
+                    await context.bot.send_message(chat_id=chat_id, text=summary, reply_markup=get_summary_quick_reply_keyboard())
 
                 if processing_message:
                     try:
