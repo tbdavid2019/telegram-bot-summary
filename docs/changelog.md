@@ -19,8 +19,12 @@
   - 實作 `get_ytdlp_cookie_opts()` 函式，自動依序偵測：① Chrome Profile (`/chrome-data/.config/google-chrome`) ➔ ② Host 掛載之 `cookies.txt` (`/app/cookies.txt`) ➔ ③ 無 Cookie 預設模式。
   - 徹底解決主機未掛載 Chrome Profile 時 yt-dlp 誤報 `could not find chrome cookies database` 導致轉錄失敗的問題。
   - 更新 `build.sh` 與 `telegram-build.sh`，在容器啟動時自動掛載宿主機之 `cookies.txt`。
-- **🛡️ Telegram HTML 解析防護與純文字自動降級 (HTML Parser Fallback)**:
-  - 當生成的摘要含有數學符號、未閉合 HTML 標籤或 Telegram 無法解析之字元而引發 `400 Bad Request` 時，系統自動捕獲並無縫降級改以純文字格式安全送達，防止回覆中斷報錯。
+- **📚 David888 Wiki 規範全面升級 (SKILL.md Spec Alignment & Book Mode)**:
+  - 嚴格實作首行 `# Title` 標題規範與自動淨化函式 `sanitize_wiki_markdown`，自動清除開頭無效聊天語句，確保 Open Graph 與 SEO 標題抓取 100% 正確。
+  - 支援 `Content-Type: text/markdown; charset=UTF-8` 原生二進制發布與參數配置，杜絕長篇 JSON 跳脫異常。
+  - 支援 `Accept: text/markdown` 內容協商讀取，直接取得乾淨 Markdown。
+  - 新增 **📖 電子書模式 (`/book`)** 與 **🖥️ 2D 簡報模式 (`/present`)** 專屬 URL 輸出。
+  - 新增無狀態 Markdown API 用戶端方法：`render_markdown` (`/api/markdown/render`)、`parse_web_to_markdown` (`/api/markdown/parse`)、`lint_markdown` (`/api/markdown/lint`)。
 
 ## [2026-08-27] - LLM Autonomous Wiki Publishing, Rich Greetings & Multi-Service Integration
 

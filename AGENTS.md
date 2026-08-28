@@ -63,8 +63,12 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 
 5. **David888 Wiki Knowledge Base Publisher (`app/services/wiki.py`)**:
    - Endpoint: `https://wiki.david888.com/api`
-   - **PRIMARY PURPOSE (FOR LLM AGENTS)**: David888 Wiki is designed for the **LLM itself**! When users request long-form analyses, research reports, complex guides, or slide decks, the LLM autonomously writes structured Markdown, publishes it to David888 Wiki, and delivers the executive summary in chat accompanied by the public **`shareUrl`** and **`presentUrl`**.
-   - **CRITICAL RULE**: Always deliver `shareUrl` (`https://wiki.david888.com/share/<shareId>`) or `presentUrl` (`<shareUrl>/present`) to users. Never give internal edit `url`.
+   - Canonical Skill Spec: `https://wiki.david888.com/.well-known/agent-skills/david888-wiki-publisher/SKILL.md`
+   - **PRIMARY PURPOSE (FOR LLM AGENTS)**: David888 Wiki is designed for the **LLM itself**! When users request long-form analyses, research reports, complex guides, or slide decks, the LLM autonomously writes structured Markdown, publishes it to David888 Wiki, and delivers the executive summary in chat accompanied by the public **`shareUrl`**, **`presentUrl`** (`/present`), and **`bookUrl`** (`/book`).
+   - **MANDATORY DOCUMENT STRUCTURE RULE**: Markdown documents MUST ALWAYS start with a level-1 `# Document Title` on the very first line. Never prefix with conversational filler. Place `[TOC]`, alerts, and blockquotes AFTER `# Document Title`.
+   - **CRITICAL LINK RULE**: Always deliver `shareUrl` (`https://wiki.david888.com/share/<shareId>`), `presentUrl` (`<shareUrl>/present`), or `bookUrl` (`<shareUrl>/book`) to users. Never give internal edit `url`.
+   - **DIRECT RAW MARKDOWN UPLOAD**: Prefer `Content-Type: text/markdown; charset=UTF-8` with query parameters (`?public=true&theme=tokyo-night&width=100%`) when publishing large markdown notes.
+   - **CONTENT NEGOTIATION**: When reading notes from `/share/<id>`, send header `Accept: text/markdown` to retrieve pure raw markdown directly.
    - Default theme: `tokyo-night`.
 
 ---

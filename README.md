@@ -144,14 +144,15 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        🌐 主機位址：https://box.david888.com
 ```
 
-### 場景 10: David888 Wiki 一鍵發布與簡報模式
+### 場景 10: David888 Wiki 一鍵發布、2D 簡報與電子書模式
 ```
 👤 用戶: /wiki
 🤖 Bot: 📚 【David888 Wiki 發布成功】
 
        📝 頁面路徑：`summary-20260827-abc123`
        🌐 閱讀頁面：https://wiki.david888.com/share/hzwna9
-       🖥️ 簡報模式：https://wiki.david888.com/share/hzwna9/present
+       🖥️ 2D 簡報模式：https://wiki.david888.com/share/hzwna9/present
+       📖 電子書模式：https://wiki.david888.com/share/hzwna9/book
        🎨 套用主題：`tokyo-night`
 
 👤 用戶: /wikiread summary-20260827-abc123

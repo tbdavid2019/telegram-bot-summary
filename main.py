@@ -1234,8 +1234,9 @@ async def handle_button_click(update, context):
                         f"📚 **【David888 Wiki 發布成功】**\n\n"
                         f"📝 頁面路徑：`{wiki_res.get('path')}`\n"
                         f"🌐 線上好讀版：{wiki_res.get('shareUrl')}\n"
-                        f"🖥️ 投影片模式：{wiki_res.get('presentUrl')}\n"
-                        f"🎨 排版主題：`tokyo-night`"
+                        f"🖥️ 2D 簡報模式：{wiki_res.get('presentUrl')}\n"
+                        f"📖 電子書模式：{wiki_res.get('bookUrl')}\n"
+                        f"🎨 排版主題：`{wiki_res.get('theme', 'tokyo-night')}`"
                     )
                 else:
                     reply = f"❌ Wiki 發布失敗：{wiki_res.get('error', '未知錯誤')}"
@@ -1823,8 +1824,9 @@ async def handle(action, update, context):
                     f"📚 【David888 Wiki 發布成功】\n\n"
                     f"📝 頁面路徑：`{res.get('path')}`\n"
                     f"🌐 閱讀頁面：{res.get('shareUrl')}\n"
-                    f"🖥️ 簡報模式：{res.get('presentUrl')}\n"
-                    f"🎨 套用主題：`tokyo-night`"
+                    f"🖥️ 2D 簡報模式：{res.get('presentUrl')}\n"
+                    f"📖 電子書模式：{res.get('bookUrl')}\n"
+                    f"🎨 套用主題：`{res.get('theme', 'tokyo-night')}`"
                 )
             else:
                 reply = f"❌ Wiki 發布失敗：{res.get('error', '未知錯誤')}"
@@ -1924,8 +1926,9 @@ async def handle(action, update, context):
                                     f"📚 **【David888 Wiki 發布成功】**\n\n"
                                     f"📝 頁面路徑：`{wiki_res.get('path')}`\n"
                                     f"🌐 線上好讀版：{wiki_res.get('shareUrl')}\n"
-                                    f"🖥️ 投影片模式：{wiki_res.get('presentUrl')}\n"
-                                    f"🎨 排版主題：`tokyo-night`"
+                                    f"🖥️ 2D 簡報模式：{wiki_res.get('presentUrl')}\n"
+                                    f"📖 電子書模式：{wiki_res.get('bookUrl')}\n"
+                                    f"🎨 排版主題：`{wiki_res.get('theme', 'tokyo-night')}`"
                                 )
                             else:
                                 reply = f"❌ Wiki 發布失敗：{wiki_res.get('error', '未知錯誤')}"
@@ -2014,10 +2017,12 @@ async def handle(action, update, context):
                             if wiki_res.get("success"):
                                 share_url = wiki_res.get("shareUrl")
                                 present_url = wiki_res.get("presentUrl")
+                                book_url = wiki_res.get("bookUrl")
                                 wiki_footer = (
                                     f"\n\n📚 **【David888 Wiki 完整排版與簡報】**\n"
                                     f"🌐 線上好讀版：{share_url}\n"
-                                    f"🖥️ 投影片簡報：{present_url}"
+                                    f"🖥️ 2D 簡報模式：{present_url}\n"
+                                    f"📖 電子書模式：{book_url}"
                                 )
                                 answer += wiki_footer
                         except Exception as e:
