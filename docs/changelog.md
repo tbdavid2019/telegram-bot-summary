@@ -15,6 +15,12 @@
   - 全新設計繁中與英文 System Prompt，標準輸出：容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個啟發性延伸續問、Hashtags。
 - **💬 自然語言風格無縫切換 (Natural Language Style Intent Detection)**:
   - 聊天室直接輸入「轉社群風」、「給我大綱」、「1分鐘版」、「問答」、「生圖」或針對內容提出深入續問，系統自動基於前次摘要上下文無縫切換或答覆。
+- **🍪 智慧 Cookie 動態偵測與跨平台相容修復 (Dynamic Cookie Resolution)**:
+  - 實作 `get_ytdlp_cookie_opts()` 函式，自動依序偵測：① Chrome Profile (`/chrome-data/.config/google-chrome`) ➔ ② Host 掛載之 `cookies.txt` (`/app/cookies.txt`) ➔ ③ 無 Cookie 預設模式。
+  - 徹底解決主機未掛載 Chrome Profile 時 yt-dlp 誤報 `could not find chrome cookies database` 導致轉錄失敗的問題。
+  - 更新 `build.sh` 與 `telegram-build.sh`，在容器啟動時自動掛載宿主機之 `cookies.txt`。
+- **🛡️ Telegram HTML 解析防護與純文字自動降級 (HTML Parser Fallback)**:
+  - 當生成的摘要含有數學符號、未閉合 HTML 標籤或 Telegram 無法解析之字元而引發 `400 Bad Request` 時，系統自動捕獲並無縫降級改以純文字格式安全送達，防止回覆中斷報錯。
 
 ## [2026-08-27] - LLM Autonomous Wiki Publishing, Rich Greetings & Multi-Service Integration
 

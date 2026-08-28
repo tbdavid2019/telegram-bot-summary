@@ -29,6 +29,10 @@ elif [ -d /home/bitnami/chrome-data ]; then
     set -- "$@" -v /home/bitnami/chrome-data:/chrome-data
 fi
 
+if [ -f "cookies.txt" ]; then
+    set -- "$@" -v "$PWD/cookies.txt:/app/cookies.txt:ro"
+fi
+
 set -- "$@" -p 8001:8001 telegram-bot-summary
 "$@"
 

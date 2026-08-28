@@ -385,8 +385,22 @@ def format_for_telegram(markdown_text):
         return final_text.strip()
     except Exception as e:
         print(f"Error formatting for Telegram: {e}")
-        return markdown_text # 如果轉換失敗，退回原始文字
-
+def get_ytdlp_cookie_opts():
+    """
+    Dynamically determine the best available cookie configuration for yt-dlp.
+    1. First priority: Chrome browser profile (/chrome-data/.config/google-chrome) if directory exists.
+    2. Second priority: Netscape cookies.txt file (/app/cookies.txt, cookies.txt, /cookies.txt) if file exists and non-empty.
+    3. Fallback: No cookie option (empty dict) so yt-dlp won't crash when chrome database is absent.
+    """
+    chrome_profile = '/chrome-data/.config/google-chrome'
+    if os.path.isdir(chrome_profile):
+        return {'cookiesfrombrowser': ('chrome', chrome_profile, None, None)}
+    
+    for candidate in ['/app/cookies.txt', 'cookies.txt', '/cookies.txt']:
+        if os.path.isfile(candidate) and os.path.getsize(candidate) > 10:
+            return {'cookiefile': candidate}
+            
+    return {}
 
 
 def is_supported_by_ytdlp(url):
@@ -428,11 +442,11 @@ def is_supported_by_ytdlp(url):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
             'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+            **get_ytdlp_cookie_opts(),
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -496,11 +510,11 @@ def extract_video_transcript(video_url):
         'skip_download': True,
         'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
         'outtmpl': '/tmp/%(id)s.%(ext)s',
-        'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 添加 cookies.txt 支援
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
         'geo_bypass': True,
         'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+        **get_ytdlp_cookie_opts(),
     }
 
     try:
@@ -590,11 +604,11 @@ def audio_transcription(video_url):
                 'preferredquality': '192',
             }],
             'ffprobe_location': '/usr/bin/ffprobe',
-            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),  # 使用 cookies.txt 檔案
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
             'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+            **get_ytdlp_cookie_opts(),
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1266,11 +1280,11 @@ def download_video_audio(url):
             'preferredquality': '192',
         }],
         'ffprobe_location': '/usr/bin/ffprobe',
-        'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
         'geo_bypass': True,
         'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+        **get_ytdlp_cookie_opts(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
@@ -1342,11 +1356,11 @@ def get_video_title(video_url):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiesfrombrowser': ('chrome', '/chrome-data/.config/google-chrome', None, None),
             'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
             'force_ipv4': True,
             'geo_bypass': True,
             'socket_timeout': MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+            **get_ytdlp_cookie_opts(),
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -2106,23 +2120,42 @@ async def handle(action, update, context):
                     # 處理長消息，將 Markdown 轉換成 Telegram 支援的 HTML
                     formatted_summary = format_for_telegram(summary_with_original)
                     
-                    if len(formatted_summary) > 4000:
-                        parts = [formatted_summary[i:i+4000] for i in range(0, len(formatted_summary), 4000)]
-                        for idx, part in enumerate(parts):
-                            markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
+                    try:
+                        if len(formatted_summary) > 4000:
+                            parts = [formatted_summary[i:i+4000] for i in range(0, len(formatted_summary), 4000)]
+                            for idx, part in enumerate(parts):
+                                markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    parse_mode='HTML',
+                                    reply_markup=markup
+                                )
+                        else:
                             await context.bot.send_message(
                                 chat_id=chat_id,
-                                text=part,
+                                text=formatted_summary,
                                 parse_mode='HTML',
-                                reply_markup=markup
+                                reply_markup=get_summary_quick_reply_keyboard()
                             )
-                    else:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=formatted_summary,
-                            parse_mode='HTML',
-                            reply_markup=get_summary_quick_reply_keyboard()
-                        )
+                    except Exception as parse_err:
+                        print(f"[WARN] Failed to send HTML formatted message ({parse_err}), falling back to plain text...")
+                        raw_text = summary_with_original
+                        if len(raw_text) > 4000:
+                            parts = [raw_text[i:i+4000] for i in range(0, len(raw_text), 4000)]
+                            for idx, part in enumerate(parts):
+                                markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=part,
+                                    reply_markup=markup
+                                )
+                        else:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=raw_text,
+                                reply_markup=get_summary_quick_reply_keyboard()
+                            )
                 else:
                     await context.bot.send_message(
                         chat_id=chat_id,
