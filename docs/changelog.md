@@ -24,6 +24,8 @@
 - **重構 `call_gpt_api` 與 `get_available_models`**:
   - `app/legacy.py`、`main.py` 與 `app/services/summarization.py` 全面遷移至 `app.services.llm`。
   - `/model` 命令與按鈕選單動態掃描所有啟用的 LLM 端點，使用者指定特定模型時若該模型出錯，亦會自動降級至備用模型。
+- **CI / GitHub Actions 支援 Node.js 24**:
+  - 在 `.github/workflows/docker-build.yml` 中設定 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`，消除 GitHub Actions Node 20 棄用告警並升級至 Node 24 執行環境。
 - **單元測試全覆蓋 (`tests/test_llm.py`)**:
   - 增加 9 項新測試，涵蓋端點探索、Groq 自動備援、Google Gemini 相容性轉譯、HTTP 4xx/5xx 容錯切換、多層級連續故障轉移及使用者自選模型優先權，全測試通過率 100% (62/62)。
 
