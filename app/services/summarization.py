@@ -2,23 +2,17 @@
 
 import re
 
-import requests
-
 from app.config import Settings
+from app.services.llm import call_llm_with_fallback
 
 
 def call_gpt_api(prompt, additional_messages, settings: Settings, selected_model=None):
-    response = requests.post(
-        f"{settings.llm_base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
-        json={
-            "model": selected_model or settings.llm_model,
-            "messages": additional_messages + [{"role": "user", "content": prompt}],
-        },
+    return call_llm_with_fallback(
+        prompt=prompt,
+        additional_messages=additional_messages,
+        selected_model=selected_model,
         timeout=settings.llm_timeout_seconds,
     )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"].strip()
 
 
 def summarize(text_array, system_prompt, settings: Settings, selected_model=None):

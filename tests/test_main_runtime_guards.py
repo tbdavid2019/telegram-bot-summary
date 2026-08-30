@@ -7,8 +7,9 @@ MAIN_SOURCE = Path("main.py").read_text(encoding="utf-8")
 
 class MainRuntimeGuardsTests(unittest.TestCase):
     def test_llm_request_has_a_timeout(self):
-        request_line = next(line for line in MAIN_SOURCE.splitlines() if 'requests.post(f"{api_base_url}/chat/completions"' in line)
-        self.assertIn("timeout=LLM_TIMEOUT_SECONDS", request_line)
+        llm_source = Path("app/services/llm.py").read_text(encoding="utf-8")
+        self.assertIn("timeout=req_timeout", llm_source)
+        self.assertIn("timeout=LLM_TIMEOUT_SECONDS", MAIN_SOURCE)
 
     def test_mongo_client_is_only_created_when_uri_is_configured(self):
         self.assertIn("if mongo_uri:", MAIN_SOURCE)

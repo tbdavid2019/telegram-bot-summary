@@ -1,6 +1,30 @@
 # Changelog
 
-## [2026-08-28] - Quick Reply Interactive Menu, 5-Part Structured Summary & Visual Concept Art
+## [2026-08-30] - Multi-Tier Fallback LLM Engine & Seamless High-Availability Failover
+
+### ✨ Added
+- **🛡️ 模組化多層級 LLM 容錯降級引擎 (`app/services/llm.py`)**:
+  - 新增 `LLMEndpoint` 與 `call_llm_with_fallback()`，全面取代原本單點調用模式。
+  - **自動探索多級模型端點 (Multi-Tier Discovery)**：
+    - ① **Tier 1 (主要)**: `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` (相容 `OPENAI_API_KEY`)
+    - ② **Tier 2 (次要)**: `LLM2_API_KEY`, `LLM2_MODEL`, `LLM2_BASE_URL`
+    - ③ **Tier 3~10 (擴展)**: `LLM3_*` 至 `LLM10_*`
+    - ④ **同節點備用模型**: `LLM_FALLBACK_MODELS`
+    - ⑤ **Groq 自動容錯**: 當環境變數包含 `GROQ_API_KEY` 且未手動指定 Groq LLM 時，自動掛載 `llama-3.3-70b-versatile` 作為自動容錯降級節點。
+  - **智慧模型格式相容性修復 (Model Normalization)**：
+    - 自動處理 Google Gemini OpenAI 兼容端點（`generativelanguage.googleapis.com`）模型名稱（如將 `models/gemini-flash-latest` 自動轉譯為 `gemini-1.5-flash`），預防 HTTP 400 Bad Request。
+  - **高可用性自動故障轉移 (High-Availability Failover)**：
+    - 當主要 LLM 遭遇 HTTP 400（參數或名稱異常）、429（Rate Limit 額度超流）、500/503（服務癱瘓或超載）或網路連線逾時（Timeout）時，系統會立即無縫切換至下一個可用備用端點，保證用戶請求 100% 不掉球。
+  - **全方位功能無縫受惠**：
+    - 影片/網頁/文件摘要、Quick Reply 6 大風格轉換、繪製概念圖提示詞生成、問答續問、Tarot/Yinyuan 占卜命理解讀全面受惠於 Fallback 機制。
+
+### 🔄 Changed & Improved
+- **重構 `call_gpt_api` 與 `get_available_models`**:
+  - `app/legacy.py`、`main.py` 與 `app/services/summarization.py` 全面遷移至 `app.services.llm`。
+  - `/model` 命令與按鈕選單動態掃描所有啟用的 LLM 端點，使用者指定特定模型時若該模型出錯，亦會自動降級至備用模型。
+- **單元測試全覆蓋 (`tests/test_llm.py`)**:
+  - 增加 9 項新測試，涵蓋端點探索、Groq 自動備援、Google Gemini 相容性轉譯、HTTP 4xx/5xx 容錯切換、多層級連續故障轉移及使用者自選模型優先權，全測試通過率 100% (62/62)。
+
 
 ### ✨ Added & Improved
 - **🎛️ 底部 Quick Reply 互動選單 (Inline Interactive Keyboard)**:

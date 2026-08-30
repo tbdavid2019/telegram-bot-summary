@@ -57,6 +57,12 @@ from app.services.quick_reply import (
     build_transform_prompt,
     build_concept_image_url,
 )
+from app.services.llm import (
+    call_llm_with_fallback,
+    get_available_models,
+    get_configured_endpoints,
+    LLMEndpoint,
+)
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -199,14 +205,7 @@ use_audio_fallback = int(os.environ.get("USE_AUDIO_FALLBACK", "0"))
 # GROQ API Key (用於 Whisper 語音轉文字)
 groq_api_key = os.environ.get("GROQ_API_KEY", "YOUR_GROQ_API_KEY")
 
-# 可用的 LLM 模型列表 (由 LLM_MODEL 和 LLM2_MODEL 組成)
-def get_available_models():
-    models = []
-    if model:
-        models.append(model)
-    if llm2_model and llm2_model not in models:
-        models.append(llm2_model)
-    return models if models else ["gpt-4o-mini"]  # 預設備用
+# 可用的 LLM 模型列表 (由 get_available_models 自動動態探索)
 
 # 解答之書 API URL
 ANSWER_BOOK_API = os.environ.get("ANSWER_BOOK_API", "http://answerbook.david888.com/answersOriginal")
@@ -1047,38 +1046,18 @@ def process_apple_podcast_url(url):
         return ["處理 Apple Podcast URL 時發生錯誤。"]
 
 def call_gpt_api(prompt, additional_messages=[], use_llm2_model=False, selected_model=None):
-    """呼叫 LLM API。
-    - use_llm2_model=True 且 LLM2 已配置，則使用 LLM2
+    """呼叫 LLM API，支援多級容錯自動切換 (Multi-tier LLM Fallback)。
     - selected_model 可指定特定模型 (用戶透過 /model 選擇)
+    - use_llm2_model=True 優先使用 LLM2
+    - 若指定/主要模型遭遇錯誤 (4xx/5xx/逾時/超流)，自動依序切換至其他可用模型與端點
     """
-    if use_llm2_model and use_llm2:
-        api_key = llm2_api_key
-        api_model = llm2_model
-        api_base_url = llm2_base_url
-    else:
-        api_key = llm_api_key
-        api_model = selected_model if selected_model else model
-        api_base_url = base_url
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    data = {
-        "model": api_model,
-        "messages": additional_messages + [
-            {"role": "user", "content": prompt}
-        ],
-    }
-
-    try:
-        response = requests.post(f"{api_base_url}/chat/completions", headers=headers, json=data, timeout=LLM_TIMEOUT_SECONDS)
-        response.raise_for_status()  # 如果返回非 200 的狀態碼會拋出異常
-        message = response.json()["choices"][0]["message"]["content"].strip()
-        return message
-    except requests.exceptions.RequestException as e:
-        print(f"Request error: {e}")
-        return ""
+    return call_llm_with_fallback(
+        prompt=prompt,
+        additional_messages=additional_messages,
+        use_llm2_model=use_llm2_model,
+        selected_model=selected_model,
+        timeout=LLM_TIMEOUT_SECONDS,
+    )
 
 
 async def handle_start(update, context):

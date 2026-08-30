@@ -305,6 +305,7 @@ chmod +x setup_chrome_container.sh
 
 ## Features
 
+- **Multi-Tier Fallback LLM Engine**：支援多級 LLM 容錯降級機制 (`LLM1` -> `LLM2` -> `LLM3` -> `Groq Fallback`)，當主要模型遭遇 HTTP 400、429 超流、500/503 或網路逾時，秒級自動切換備用端點，並自動修復 Google Gemini OpenAI 格式相容性。
 - **Supports text**：處理純文本。
 - **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura`）。
 - **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`，全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
@@ -412,13 +413,18 @@ docker run -d \
 
 ## 環境變數表格
 
-### LLM Variables
+### LLM & Fallback Variables
 
-| Environment Variable | Description                       |
-|-----------------------|-----------------------------------|
-| `LLM_BASE_URL`        | LLM API 的基本地址               |
-| `OPENAI_API_KEY`      | 用於 OpenAI API 的金鑰           |
-| `GROQ_API_KEY`        | 用於 GROQ Whisper 的 API 金鑰    |
+| Environment Variable | Description |
+|-----------------------|-------------|
+| `LLM_API_KEY` / `OPENAI_API_KEY` | 主要 LLM API 金鑰 |
+| `LLM_MODEL` | 主要 LLM 模型名稱 (預設: `gpt-4o-mini`) |
+| `LLM_BASE_URL` | 主要 LLM API 基礎 URL (預設: `https://api.openai.com/v1`) |
+| `LLM2_API_KEY` / `LLM2_MODEL` / `LLM2_BASE_URL` | 備用 LLM 2 設定 (支援自動容錯降級) |
+| `LLM3_API_KEY` / `LLM3_MODEL` / `LLM3_BASE_URL` | 備用 LLM 3 設定 (支援多級容錯，可擴展至 LLM10) |
+| `LLM_FALLBACK_MODELS` | 同節點備用模型列表 (逗號分隔) |
+| `GROQ_API_KEY` | GROQ API 金鑰 (用於 Whisper 語音轉文字與自動 Groq LLM 降級) |
+| `LLM_TIMEOUT_SECONDS` | LLM 呼叫逾時時間 (預設: `180` 秒) |
 
 ### Bot Variables
 
