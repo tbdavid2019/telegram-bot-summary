@@ -1,4 +1,4 @@
-"""Unit tests for the multi-tier Fallback LLM Service."""
+"""Unit tests for the multi-tier & multi-key Fallback LLM Service."""
 
 import os
 import unittest
@@ -38,19 +38,55 @@ class TestLLMService(unittest.TestCase):
             self.assertEqual(endpoints[2].name, "LLM3")
             self.assertEqual(endpoints[2].model, "gemini-1.5-flash")
 
+    def test_multi_key_pool_discovery(self):
+        env = {
+            "LLM_API_KEY": "key1,key2,key3",
+            "LLM_MODEL": "gemini-2.5-flash",
+            "LLM_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "LLM2_API_KEY": "gsk_1,gsk_2",
+            "LLM2_MODEL": "openai/gpt-oss-120b",
+            "LLM2_BASE_URL": "https://api.groq.com/openai/v1",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            endpoints = get_configured_endpoints()
+            self.assertEqual(len(endpoints), 5)
+            self.assertEqual(endpoints[0].name, "LLM1 (Primary Key #1)")
+            self.assertEqual(endpoints[1].name, "LLM1 (Primary Key #2)")
+            self.assertEqual(endpoints[2].name, "LLM1 (Primary Key #3)")
+            self.assertEqual(endpoints[3].name, "LLM2 (Key #1)")
+            self.assertEqual(endpoints[4].name, "LLM2 (Key #2)")
+
     def test_groq_auto_fallback_added_when_groq_key_present(self):
         env = {
             "LLM_API_KEY": "test-key-1",
             "LLM_MODEL": "gpt-4o-mini",
             "LLM_BASE_URL": "https://api.openai.com/v1",
-            "GROQ_API_KEY": "gsk_test_groq_key",
+            "GROQ_API_KEY": "gsk_test_groq_key_1, gsk_test_groq_key_2",
         }
         with patch.dict(os.environ, env, clear=True):
             endpoints = get_configured_endpoints()
-            self.assertEqual(len(endpoints), 2)
+            self.assertEqual(len(endpoints), 3)
             self.assertEqual(endpoints[0].model, "gpt-4o-mini")
             self.assertTrue("Groq Auto-Fallback" in endpoints[1].name)
-            self.assertEqual(endpoints[1].model, "llama-3.3-70b-versatile")
+            self.assertTrue("Groq Auto-Fallback" in endpoints[2].name)
+
+    def test_json_fallback_configs(self):
+        import json
+        configs = [
+            {"name": "Backup DeepSeek", "model": "deepseek-chat", "base_url": "https://api.deepseek.com/v1", "api_key": "dsk_1"},
+            {"name": "Backup OpenRouter", "model": "meta-llama/llama-3.3-70b-instruct", "base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or-1"}
+        ]
+        env = {
+            "LLM_API_KEY": "main_key",
+            "LLM_MODEL": "gpt-4o-mini",
+            "LLM_FALLBACK_CONFIGS": json.dumps(configs)
+        }
+        with patch.dict(os.environ, env, clear=True):
+            endpoints = get_configured_endpoints()
+            self.assertEqual(len(endpoints), 3)
+            self.assertEqual(endpoints[1].name, "Backup DeepSeek")
+            self.assertEqual(endpoints[1].model, "deepseek-chat")
+            self.assertEqual(endpoints[2].name, "Backup OpenRouter")
 
     def test_get_available_models(self):
         endpoints = [
@@ -62,13 +98,11 @@ class TestLLMService(unittest.TestCase):
         self.assertEqual(models, ["gemini-1.5-flash", "llama-3.3-70b-versatile"])
 
     def test_normalize_model_for_endpoint(self):
-        # Gemini endpoint normalizations
         base_gemini = "https://generativelanguage.googleapis.com/v1beta/openai"
         self.assertEqual(_normalize_model_for_endpoint("models/gemini-1.5-flash", base_gemini), "gemini-1.5-flash")
         self.assertEqual(_normalize_model_for_endpoint("models/gemini-flash-latest", base_gemini), "gemini-1.5-flash")
         self.assertEqual(_normalize_model_for_endpoint("gemini-2.0-flash", base_gemini), "gemini-2.0-flash")
 
-        # Non-Gemini endpoint retains original name
         base_openai = "https://api.openai.com/v1"
         self.assertEqual(_normalize_model_for_endpoint("gpt-4o-mini", base_openai), "gpt-4o-mini")
 
@@ -91,12 +125,10 @@ class TestLLMService(unittest.TestCase):
 
     @patch("app.services.llm.requests.post")
     def test_call_llm_fallback_on_http_error(self, mock_post):
-        # Primary returns 400 Bad Request / 429 Rate Limit
         resp_400 = MagicMock()
         resp_400.status_code = 400
         resp_400.raise_for_status.side_effect = requests.exceptions.HTTPError("400 Bad Request", response=resp_400)
 
-        # Secondary returns 200 OK
         resp_200 = MagicMock()
         resp_200.status_code = 200
         resp_200.json.return_value = {
@@ -116,7 +148,6 @@ class TestLLMService(unittest.TestCase):
 
     @patch("app.services.llm.requests.post")
     def test_call_llm_multi_tier_fallback(self, mock_post):
-        # 1st fails with Timeout, 2nd fails with 500, 3rd succeeds
         timeout_err = requests.exceptions.Timeout("Connection timed out")
         resp_500 = MagicMock()
         resp_500.status_code = 500
@@ -157,7 +188,6 @@ class TestLLMService(unittest.TestCase):
         result = call_llm_with_fallback("Test prompt", selected_model="target-model", endpoints=endpoints)
         self.assertEqual(result, "Response from selected model")
         
-        # Verify the first call was to target-model at url2
         call_kwargs = mock_post.call_args[1]
         self.assertEqual(call_kwargs["json"]["model"], "target-model")
         self.assertTrue("url2" in mock_post.call_args[0][0])

@@ -5,16 +5,18 @@
 ### ✨ Added
 - **🛡️ 模組化多層級 LLM 容錯降級引擎 (`app/services/llm.py`)**:
   - 新增 `LLMEndpoint` 與 `call_llm_with_fallback()`，全面取代原本單點調用模式。
-  - **自動探索多級模型端點 (Multi-Tier Discovery)**：
-    - ① **Tier 1 (主要)**: `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` (相容 `OPENAI_API_KEY`)
-    - ② **Tier 2 (次要)**: `LLM2_API_KEY`, `LLM2_MODEL`, `LLM2_BASE_URL`
-    - ③ **Tier 3~10 (擴展)**: `LLM3_*` 至 `LLM10_*`
-    - ④ **同節點備用模型**: `LLM_FALLBACK_MODELS`
-    - ⑤ **Groq 自動容錯**: 當環境變數包含 `GROQ_API_KEY` 且未手動指定 Groq LLM 時，自動掛載 `llama-3.3-70b-versatile` 作為自動容錯降級節點。
-  - **智慧模型格式相容性修復 (Model Normalization)**：
-    - 自動處理 Google Gemini OpenAI 兼容端點（`generativelanguage.googleapis.com`）模型名稱（如將 `models/gemini-flash-latest` 自動轉譯為 `gemini-1.5-flash`），預防 HTTP 400 Bad Request。
+  - **自動探索多級模型端點與多 Key 金鑰池 (Multi-Tier & Multi-Key Discovery)**：
+    - ① **Tier 1 (主要)**: `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` (支援多組逗號分隔金鑰自動輪詢容錯)
+    - ② **Tier 2 (次要)**: `LLM2_API_KEY`, `LLM2_MODEL`, `LLM2_BASE_URL` (支援多組逗號分隔金鑰)
+    - ③ **Tier 3~20 (超長延伸梯隊)**: `LLM3_*` 至 `LLM20_*` 自由擴展
+    - ④ **JSON 結構化彈性備援池**: `LLM_FALLBACK_CONFIGS`（支援直接注入任意多組 provider、model 與 key）
+    - ⑤ **同節點備用模型**: `LLM_FALLBACK_MODELS`
+    - ⑥ **Groq 自動容錯池**: 當環境變數包含 `GROQ_API_KEY` / `GROQ_FALLBACK_KEYS` 且未手動指定 Groq LLM 時，自動掛載 `llama-3.3-70b-versatile` 作為自動容錯降級節點。
+  - **智慧模型格式與別名容錯 (Model Normalization & Intra-Provider Alias Failover)**：
+    - 自動處理 Google Gemini OpenAI 兼容端點（`generativelanguage.googleapis.com`）模型名稱（如將 `models/gemini-flash-latest` 自動轉譯為 `gemini-1.5-flash`，並在 400/404 時依序嘗試 `gemini-2.5-flash`、`gemini-2.0-flash`、`gemini-1.5-flash`）。
+    - 自動處理 Groq 端點（`openai/gpt-oss-120b` 或 `llama-3.3-70b-versatile` 等模型別名防護）。
   - **高可用性自動故障轉移 (High-Availability Failover)**：
-    - 當主要 LLM 遭遇 HTTP 400（參數或名稱異常）、429（Rate Limit 額度超流）、500/503（服務癱瘓或超載）或網路連線逾時（Timeout）時，系統會立即無縫切換至下一個可用備用端點，保證用戶請求 100% 不掉球。
+    - 當任何金鑰或端點遭遇 HTTP 400、401、403（金鑰失效/被封）、429（Rate Limit 額度超流）、500/503（服務癱瘓或超載）或網路連線逾時（Timeout）時，系統會立即無縫切換至同一梯隊的下一把 Key 或下一梯隊備用端點，保證用戶請求 100% 不中斷。
   - **全方位功能無縫受惠**：
     - 影片/網頁/文件摘要、Quick Reply 6 大風格轉換、繪製概念圖提示詞生成、問答續問、Tarot/Yinyuan 占卜命理解讀全面受惠於 Fallback 機制。
 

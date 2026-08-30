@@ -1,12 +1,11 @@
-"""Multi-tier LLM Service with automatic failover and multi-provider fallback.
+"""Multi-tier & Multi-Key Fallback LLM Service.
 
-Supports:
-- Primary LLM (LLM_API_KEY, LLM_MODEL, LLM_BASE_URL)
-- Secondary & Multi-tier LLMs (LLM2..LLM10)
-- Auto Groq Fallback (GROQ_API_KEY)
-- Model-level Fallbacks (LLM_FALLBACK_MODELS)
-- Intelligent model name normalization (e.g. Google Gemini OpenAI endpoint formatting)
-- Automatic retry on HTTP 4xx/5xx errors, timeouts, rate limits, and network errors.
+Comprehensive high-availability architecture:
+1. Multi-Key Pooling: Supports comma-separated keys (e.g. key1,key2,key3) per tier with automatic key rotation on rate limits / quota errors.
+2. Multi-Tier Endpoints: Scans LLM1 (Primary) through LLM20 (Secondary, Tertiary, etc.).
+3. Multi-Provider Fallbacks: Auto-detects and supports Google Gemini, Groq, OpenAI, DeepSeek, OpenRouter, and custom OpenAI-compatible gateways.
+4. Intelligent Intra-Provider Aliases: Recovers from 400/404 model name mismatches by trying safe aliases before failing over.
+5. JSON Fallback Configs: Supports LLM_FALLBACK_CONFIGS for declaring arbitrary fallback pools.
 """
 
 from dataclasses import dataclass
@@ -25,7 +24,7 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "180"))
 
 @dataclass
 class LLMEndpoint:
-    """Represents a configured LLM provider endpoint."""
+    """Represents a configured LLM provider endpoint candidate."""
     name: str
     model: str
     base_url: str
@@ -39,76 +38,121 @@ class LLMEndpoint:
         return self.base_url.rstrip("/")
 
 
+def _split_keys(key_string: Optional[str]) -> List[str]:
+    """Split comma- or newline-separated API keys into a clean list."""
+    if not key_string:
+        return []
+    keys = []
+    for k in re.split(r'[\r\n,]+', key_string):
+        cleaned = k.strip()
+        if cleaned and cleaned not in ("YOUR_API_KEY", "YOUR_GROQ_API_KEY", "your_llm_api_key", "your_openai_api_key"):
+            keys.append(cleaned)
+    return keys
+
+
 def get_configured_endpoints() -> List[LLMEndpoint]:
     """
-    Discover all configured LLM endpoints from environment variables in priority order:
-    1. Primary (LLM_API_KEY / LLM_MODEL / LLM_BASE_URL)
-    2. LLM2 (LLM2_API_KEY / LLM2_MODEL / LLM2_BASE_URL)
-    3. LLM3..LLM10 (LLM{i}_API_KEY / LLM{i}_MODEL / LLM{i}_BASE_URL)
-    4. Auto Groq fallback (if GROQ_API_KEY is available and not already configured)
+    Discover all configured LLM endpoints and key pools from environment variables in priority order:
+    1. Primary Tier (LLM_API_KEY / LLM1_API_KEY / OPENAI_API_KEY) - handles multi-key lists.
+    2. Multi-Tier Fallbacks (LLM2..LLM20) - handles multi-key lists per tier.
+    3. JSON Structured Fallback Pool (LLM_FALLBACK_CONFIGS).
+    4. Model-level Fallbacks on Primary (LLM_FALLBACK_MODELS).
+    5. Auto Groq Fallbacks (GROQ_API_KEY / GROQ_FALLBACK_KEYS) if not already explicitly registered.
     """
     timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
     endpoints: List[LLMEndpoint] = []
 
-    # 1. Primary LLM
-    primary_key = os.environ.get("LLM_API_KEY") or os.environ.get("LLM1_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
-    primary_model = os.environ.get("LLM_MODEL") or os.environ.get("LLM1_MODEL") or "gpt-4o-mini"
-    primary_base_url = os.environ.get("LLM_BASE_URL") or os.environ.get("LLM1_BASE_URL") or "https://api.openai.com/v1"
+    # 1. Primary LLM (Tier 1)
+    primary_raw_keys = os.environ.get("LLM_API_KEY") or os.environ.get("LLM1_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+    primary_keys = _split_keys(primary_raw_keys)
+    primary_model = (os.environ.get("LLM_MODEL") or os.environ.get("LLM1_MODEL") or "gpt-4o-mini").strip()
+    primary_base_url = (os.environ.get("LLM_BASE_URL") or os.environ.get("LLM1_BASE_URL") or "https://api.openai.com/v1").strip()
 
-    if primary_key and primary_key.strip() and primary_key != "YOUR_API_KEY":
+    for idx, key in enumerate(primary_keys):
+        tag = f"LLM1 (Primary Key #{idx+1})" if len(primary_keys) > 1 else "LLM1 (Primary)"
         endpoints.append(LLMEndpoint(
-            name="LLM1 (Primary)",
-            model=primary_model.strip(),
-            base_url=primary_base_url.strip(),
-            api_key=primary_key.strip(),
+            name=tag,
+            model=primary_model,
+            base_url=primary_base_url,
+            api_key=key,
             timeout=timeout,
         ))
 
-    # 2. LLM2..LLM10
-    for idx in range(2, 11):
-        k = os.environ.get(f"LLM{idx}_API_KEY", "").strip()
-        m = os.environ.get(f"LLM{idx}_MODEL", "").strip()
-        u = os.environ.get(f"LLM{idx}_BASE_URL", "").strip()
+    # 2. Multi-Tier Fallbacks (LLM2..LLM20)
+    for tier in range(2, 21):
+        tier_keys = _split_keys(os.environ.get(f"LLM{tier}_API_KEY", ""))
+        tier_model = os.environ.get(f"LLM{tier}_MODEL", "").strip()
+        tier_url = os.environ.get(f"LLM{tier}_BASE_URL", "").strip()
 
-        # If base_url is omitted but Groq key is used or standard OpenAI
-        if not u and (m.startswith("llama") or m.startswith("gemma") or m.startswith("openai/gpt-oss") or "groq" in k.lower()):
-            u = "https://api.groq.com/openai/v1"
-        elif not u:
-            u = "https://api.openai.com/v1"
+        if not tier_keys or not tier_model:
+            continue
 
-        if k and m and k != "YOUR_API_KEY":
+        if not tier_url:
+            if tier_model.startswith("llama") or tier_model.startswith("gemma") or tier_model.startswith("openai/gpt-oss") or any("gsk_" in k for k in tier_keys):
+                tier_url = "https://api.groq.com/openai/v1"
+            else:
+                tier_url = "https://api.openai.com/v1"
+
+        for k_idx, key in enumerate(tier_keys):
+            tag = f"LLM{tier} (Key #{k_idx+1})" if len(tier_keys) > 1 else f"LLM{tier}"
             endpoints.append(LLMEndpoint(
-                name=f"LLM{idx}",
-                model=m,
-                base_url=u,
-                api_key=k,
+                name=tag,
+                model=tier_model,
+                base_url=tier_url,
+                api_key=key,
                 timeout=timeout,
             ))
 
-    # 3. Model fallbacks on Primary endpoint if LLM_FALLBACK_MODELS is set
+    # 3. JSON Structured Fallback Pool (LLM_FALLBACK_CONFIGS)
+    json_configs = os.environ.get("LLM_FALLBACK_CONFIGS", "").strip()
+    if json_configs:
+        try:
+            parsed = json.loads(json_configs)
+            if isinstance(parsed, list):
+                for idx, item in enumerate(parsed):
+                    if isinstance(item, dict) and item.get("api_key") and item.get("model"):
+                        name = item.get("name", f"Custom Fallback #{idx+1}")
+                        model = item.get("model")
+                        url = item.get("base_url", "https://api.openai.com/v1")
+                        for k in _split_keys(item.get("api_key")):
+                            endpoints.append(LLMEndpoint(
+                                name=name,
+                                model=model,
+                                base_url=url,
+                                api_key=k,
+                                timeout=timeout,
+                            ))
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM_FALLBACK_CONFIGS: {e}")
+
+    # 4. Model-level Fallbacks on Primary endpoint if LLM_FALLBACK_MODELS is set
     fallback_models_env = os.environ.get("LLM_FALLBACK_MODELS", "").strip()
-    if fallback_models_env and primary_key and primary_key != "YOUR_API_KEY":
+    if fallback_models_env and primary_keys:
         for fb_model in [m.strip() for m in fallback_models_env.split(",") if m.strip()]:
             if not any(ep.model == fb_model and ep.clean_base_url == primary_base_url.rstrip("/") for ep in endpoints):
                 endpoints.append(LLMEndpoint(
-                    name=f"Primary Fallback ({fb_model})",
+                    name=f"Primary Fallback Model ({fb_model})",
                     model=fb_model,
-                    base_url=primary_base_url.strip(),
-                    api_key=primary_key.strip(),
+                    base_url=primary_base_url,
+                    api_key=primary_keys[0],
                     timeout=timeout,
                 ))
 
-    # 4. Auto Groq fallback if GROQ_API_KEY is present and not yet in endpoints
-    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if groq_key and groq_key != "YOUR_GROQ_API_KEY" and not any("groq.com" in ep.base_url for ep in endpoints):
-        groq_model = os.environ.get("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile")
-        endpoints.append(LLMEndpoint(
-            name=f"Groq Auto-Fallback ({groq_model})",
-            model=groq_model,
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_key,
-            timeout=timeout,
-        ))
+    # 5. Auto Groq fallback if GROQ_API_KEY is present and not explicitly configured in previous tiers
+    groq_keys = _split_keys(os.environ.get("GROQ_API_KEY", "") or os.environ.get("GROQ_FALLBACK_KEYS", ""))
+    if groq_keys:
+        groq_model = os.environ.get("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile").strip()
+        # Add Groq keys if they are not already in the endpoints
+        for g_idx, g_key in enumerate(groq_keys):
+            if not any(ep.api_key == g_key for ep in endpoints):
+                tag = f"Groq Auto-Fallback (Key #{g_idx+1})" if len(groq_keys) > 1 else f"Groq Auto-Fallback ({groq_model})"
+                endpoints.append(LLMEndpoint(
+                    name=tag,
+                    model=groq_model,
+                    base_url="https://api.groq.com/openai/v1",
+                    api_key=g_key,
+                    timeout=timeout,
+                ))
 
     return endpoints
 
@@ -136,7 +180,6 @@ def get_available_models(endpoints: Optional[List[LLMEndpoint]] = None) -> List[
 def _normalize_model_for_endpoint(model: str, base_url: str) -> str:
     """Normalize model string depending on provider characteristics."""
     if "generativelanguage.googleapis.com" in base_url:
-        # Google Gemini OpenAI-compatible endpoint expects 'gemini-1.5-flash' rather than 'models/gemini-flash-latest'
         cleaned = model.removeprefix("models/")
         if cleaned in ("gemini-flash-latest", "flash-latest"):
             return "gemini-1.5-flash"
@@ -169,7 +212,7 @@ def _execute_chat_completion(
     models_to_try = [target_model]
 
     if "generativelanguage.googleapis.com" in api_base_url:
-        for alias in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+        for alias in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"):
             if alias not in models_to_try:
                 models_to_try.append(alias)
     elif "api.groq.com" in api_base_url:
@@ -177,7 +220,11 @@ def _execute_chat_completion(
             clean_m = target_model.removeprefix("openai/")
             if clean_m not in models_to_try:
                 models_to_try.append(clean_m)
-        for alias in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
+        for alias in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b", "deepseek-r1-distill-llama-70b"):
+            if alias not in models_to_try:
+                models_to_try.append(alias)
+    elif "api.openai.com" in api_base_url:
+        for alias in ("gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"):
             if alias not in models_to_try:
                 models_to_try.append(alias)
     
@@ -227,11 +274,11 @@ def call_llm_with_fallback(
     endpoints: Optional[List[LLMEndpoint]] = None
 ) -> str:
     """
-    Execute an LLM chat completion with multi-tier automatic failover.
+    Execute an LLM chat completion with multi-tier, multi-key automatic failover.
     
     1. Orders endpoints based on `selected_model` or `use_llm2_model`.
-    2. Sequentially tries each endpoint in the candidate list.
-    3. Seamlessly fails over on HTTP errors (400, 429, 500, 503, etc.), timeouts, or empty responses.
+    2. Sequentially tries each candidate endpoint/key in the pool.
+    3. Seamlessly fails over on HTTP errors (400, 401, 403, 429, 500, 503), timeouts, or empty responses.
     4. Returns the trimmed response string from the first successful endpoint.
     """
     configured = list(endpoints) if endpoints is not None else get_configured_endpoints()
@@ -247,7 +294,7 @@ def call_llm_with_fallback(
     candidates: List[LLMEndpoint] = []
     
     if selected_model:
-        # Find exact matching model endpoint
+        # Find matching model endpoints across all tiers/keys
         matched = [ep for ep in configured if ep.model == selected_model]
         unmatched = [ep for ep in configured if ep.model != selected_model]
         
@@ -266,7 +313,7 @@ def call_llm_with_fallback(
         candidates.extend(unmatched)
         
     elif use_llm2_model:
-        # Prioritize LLM2 endpoint if present
+        # Prioritize LLM2 endpoint(s) if present
         llm2_eps = [ep for ep in configured if ep.name.startswith("LLM2")]
         other_eps = [ep for ep in configured if not ep.name.startswith("LLM2")]
         candidates = llm2_eps + other_eps if llm2_eps else configured
@@ -307,5 +354,5 @@ def call_llm_with_fallback(
             print(f"[LLM Fallback] ⚠️ Candidate #{idx + 1} '{candidate.name}' exception: {err_msg}. Failing over to next LLM...")
             last_error = gen_err
 
-    print(f"[LLM CRITICAL] ❌ All {len(candidates)} LLM endpoint(s) failed. Last error: {last_error}")
+    print(f"[LLM CRITICAL] ❌ All {len(candidates)} LLM candidate(s) failed. Last error: {last_error}")
     return ""
