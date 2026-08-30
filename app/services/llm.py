@@ -151,7 +151,8 @@ def _execute_chat_completion(
     timeout: Optional[float] = None
 ) -> str:
     """
-    Send a single POST request to the LLM endpoint's /chat/completions.
+    Send a POST request to the LLM endpoint's /chat/completions.
+    Supports intelligent intra-provider model alias failover on HTTP 400/404 before throwing.
     Raises requests.exceptions.RequestException or ValueError on failure.
     """
     api_base_url = endpoint.clean_base_url
@@ -165,26 +166,56 @@ def _execute_chat_completion(
     messages.append({"role": "user", "content": prompt})
     
     target_model = _normalize_model_for_endpoint(endpoint.model, endpoint.clean_base_url)
-    
-    data = {
-        "model": target_model,
-        "messages": messages,
-    }
+    models_to_try = [target_model]
+
+    if "generativelanguage.googleapis.com" in api_base_url:
+        for alias in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+            if alias not in models_to_try:
+                models_to_try.append(alias)
+    elif "api.groq.com" in api_base_url:
+        if target_model.startswith("openai/"):
+            clean_m = target_model.removeprefix("openai/")
+            if clean_m not in models_to_try:
+                models_to_try.append(clean_m)
+        for alias in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
+            if alias not in models_to_try:
+                models_to_try.append(alias)
     
     req_timeout = timeout or endpoint.timeout
-    response = requests.post(url, headers=headers, json=data, timeout=req_timeout)
-    response.raise_for_status()
-    
-    resp_json = response.json()
-    choices = resp_json.get("choices", [])
-    if not choices:
-        raise ValueError("Empty choices returned from LLM provider")
-        
-    content = choices[0].get("message", {}).get("content", "")
-    if content is None:
-        raise ValueError("Null content returned in message from LLM provider")
-        
-    return content.strip()
+    last_err = None
+
+    for m in models_to_try:
+        try:
+            data = {
+                "model": m,
+                "messages": messages,
+            }
+            response = requests.post(url, headers=headers, json=data, timeout=req_timeout)
+            response.raise_for_status()
+            
+            resp_json = response.json()
+            choices = resp_json.get("choices", [])
+            if not choices:
+                raise ValueError("Empty choices returned from LLM provider")
+                
+            content = choices[0].get("message", {}).get("content", "")
+            if content is None:
+                raise ValueError("Null content returned in message from LLM provider")
+                
+            return content.strip()
+        except requests.exceptions.HTTPError as http_err:
+            status = getattr(getattr(http_err, 'response', None), 'status_code', None)
+            if status in (400, 404) and m != models_to_try[-1]:
+                last_err = http_err
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            raise
+
+    if last_err:
+        raise last_err
+    return ""
 
 
 def call_llm_with_fallback(
