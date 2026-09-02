@@ -13,8 +13,8 @@ echo "=========================================================="
 # 1. Create data directory
 echo "[1/4] Creating Chrome data directory at $CHROME_DATA_DIR..."
 mkdir -p "$CHROME_DATA_DIR"
-# Ensure permissions are correct so the container can write to it
-chmod -R 777 "$CHROME_DATA_DIR"
+# Ensure secure permissions so unauthorized local users cannot read sensitive session cookies
+chmod -R 700 "$CHROME_DATA_DIR"
 
 # 2. Pull and run the Chrome image
 echo "[2/4] Pulling and starting lscr.io/linuxserver/chromium image..."

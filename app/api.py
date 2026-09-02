@@ -2,7 +2,7 @@ import os
 import secrets
 import logging
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from app.runtime import run_blocking
@@ -16,6 +16,16 @@ app = FastAPI(
     description="API for summarizing web page content, YouTube transcripts, or general text.",
     version="1.0.0"
 )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 security = HTTPBearer()
 
@@ -34,7 +44,7 @@ if not valid_tokens:
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
-    if token not in valid_tokens:
+    if not token or not any(secrets.compare_digest(token, valid_t) for valid_t in valid_tokens):
         logger.warning("Unauthorized API access attempt with invalid token.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,9 +53,9 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     return token
 
 class SummarizeRequest(BaseModel):
-    input: str = Field(..., description="The YouTube URL, website URL, or text to summarize.", min_length=1)
-    language: str = Field("zh-TW", description="The output summary language (e.g. 'zh-TW', 'en').")
-    model: Optional[str] = Field(None, description="Optional custom LLM model override.")
+    input: str = Field(..., description="The YouTube URL, website URL, or text to summarize.", min_length=1, max_length=1_000_000)
+    language: str = Field("zh-TW", description="The output summary language (e.g. 'zh-TW', 'en').", max_length=50)
+    model: Optional[str] = Field(None, description="Optional custom LLM model override.", max_length=100)
 
 class SummarizeResponse(BaseModel):
     status: str = Field("success", description="Response status.")
@@ -59,11 +69,19 @@ def health_check():
 
 @app.post("/api/v1/summarize", response_model=SummarizeResponse)
 async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_token)):
-    from app.legacy import process_user_input, summarize, is_url, get_web_title
+    from app.services.content import is_url, is_safe_url
     
     user_input = request.input.strip()
     language = request.language.strip()
     selected_model = request.model
+    
+    if is_url(user_input) and not is_safe_url(user_input):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid, blocked, or prohibited private/internal URL."
+        )
+
+    from app.legacy import process_user_input, summarize, get_web_title
     
     logger.info(f"Received summary request. Input length: {len(user_input)}, Lang: {language}")
     

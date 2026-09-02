@@ -1,16 +1,52 @@
 rebuild.sh
 main_production.py
 .env
+.env.*
+*.env
+
 # Local deployment secrets and per-host environment snapshots.
 key/
 cookies.txt
 公開版本env.txt
+*.pem
+*.key
+*.pfx
+*.crt
+*.p12
+*.cer
+*.id_rsa
+
+# Virtual environments
 .venv/
-__pycache__/
-.ipynb_checkpoints/
-.DS_Store
-cron.log
-auto_update.log
+venv/
+env/
+
+# Python caches and bytecode
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Temporary media and downloads
+/tmp/
+downloads/
+*.tmp
+*.wav
+*.mp3
+*.mp4
+*.m4a
+*.webm
+
+# Logs
+*.log
+cron.log
+auto_update.log
+
+# System
+.DS_Store
+.ipynb_checkpoints/
+

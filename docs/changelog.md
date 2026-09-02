@@ -1,5 +1,46 @@
 # Changelog
 
+## [2026-09-02] - Comprehensive 7-Layer Security Audit & Codebase Hardening
+
+### ✨ Added
+- **🛡️ 7 層安全防禦架構與 SSRF 防護 (`app/services/content.py`)**:
+  - 新增 `is_safe_url()` 嚴格校驗傳入之 URL，阻絕所有私有內部網段 (RFC1918 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)、本機迴路 (`127.0.0.0/8`, `localhost`)、雲端主機中繼資料服務 (`169.254.169.254`, `metadata.google.internal`, `metadata.aws`) 與非 HTTP(S) 通訊協定 (`file://`, `gopher://`, `dict://`)，徹底防堵 Server-Side Request Forgery (SSRF) 攻擊。
+  - 在 `app/legacy.py`、`main.py` 與 `app/api.py` 的網頁解析 (`scrape_text_from_url`)、Podcast RSS 抓取 (`extract_rss_*`)、Podcast 音訊下載 (`download_and_transcribe_podcast`)、影片下載 (`download_video_audio`) 及 FastAPI 摘要端點 (`/api/v1/summarize`) 全面套用 SSRF 阻斷。
+- **🌐 FastAPI 安全標頭中介軟體 (HTTP Security Headers Middleware)**:
+  - 為 `app/api.py` 及 `api.py` 加入安全回應標頭中介層：
+    - `X-Content-Type-Options: nosniff`（防範 MIME 嗅探攻擊）
+    - `X-Frame-Options: DENY`（防範 Clickjacking 點擊劫持）
+    - `Referrer-Policy: strict-origin-when-cross-origin`（保護使用者來源 URL 隱私）
+    - `Permissions-Policy: camera=(), microphone=(), geolocation=()`（禁用敏感瀏覽器功能）
+    - `X-XSS-Protection: 1; mode=block`
+- **🧪 完整安全審計單元測試套件 (`tests/test_security_audit.py`)**:
+  - 新增針對 SSRF 阻擋、FastAPI 安全標頭、常數時間 Bearer Token 驗證、Prompt Injection 提示詞隔離邊界以及 Settings 配置之端到端測試，全數通過 (69/69 測試)。
+
+### 🔄 Changed & Improved
+- **🧠 Prompt Injection 提示詞防禦與外部資料隔離**:
+  - 在 `summarize` (`app/legacy.py`, `main.py`, `app/services/summarization.py`) 中，將所有外部不可信來源資料嚴格包裹於 `--- BEGIN SOURCE CONTENT ---` 與 `--- END SOURCE CONTENT ---` 結構化隔離標記中。
+  - 於 System Prompt 中注入安全規範指令，要求 LLM 嚴格僅將標記內文本視為被動資料進行結構化摘要，嚴禁執行或受內部指令/提示詞覆蓋（Prompt Override）所引導。
+- **🔒 常數時間 API 金鑰驗證 (Timing-Attack Safe Verification)**:
+  - 在 `app/api.py` 與 `api.py` 的 `verify_token` 中改用 `secrets.compare_digest` 進行常數時間比對，徹底消除時序攻擊（Timing Attack）風險。
+- **📦 FastAPI 請求載荷長度與記憶體耗盡防禦 (DoS Protection)**:
+  - 在 `SummarizeRequest` 中為 `input` 設置最大長度約束 `max_length=1_000_000`（100 萬字元），並為 `language` 與 `model` 加入欄位長度上限，防禦惡意大型 Payload 造成記憶體耗盡。
+- **🧹 暫存檔案生命週期與例外安全清理 (Try-Finally Temp File Cleanup)**:
+  - 全面盤點並重構所有暫存音訊 (`.wav`, `.mp3`)、文字 (`.txt`) 及文件檔案處理邏輯（`handle_file`、`download_and_transcribe_podcast`、`audio_transcription`、`handle_yt2audio`、`handle_yt2text`），以 `try...finally:` 確保在遇到網路異常、API 錯誤或超時等非正常流程時，磁碟上的暫存檔必定 100% 刪除，避免磁碟耗盡 (Disk Exhaustion DoS)。
+- **📁 檔案上傳路徑穿越與副檔名過濾 (Path Traversal Hardening)**:
+  - 在 `handle_file` 中對文件名稱與副檔名以正則過濾 `re.sub(r'[^a-zA-Z0-9._-]', '', ext)`，並清洗 `file_id`，確保暫存路徑安全受限於 `/tmp/` 系統暫存區。
+
+### 🔧 Fixed
+- **🔑 `.gitignore` 憑證與機密檔案防護不全修復**:
+  - 擴充 `.gitignore` 涵蓋 `.env.*`、`*.env`、`*.pem`、`*.key`、`*.pfx`、`*.crt`、`*.p12`、`*.cer`、`*.id_rsa`、`*.log`、`*.tmp`、`*.wav`、`*.mp3`、`*.mp4`、`downloads/` 等，阻絕任何金鑰或快取被意外提交至版控。
+- **🔑 多金鑰池下的 Groq API 金鑰提取修復**:
+  - 修復 `app/legacy.py` 與 `main.py` 在多金鑰模式下調用 Whisper ASR 時未拆分逗號可能傳入多組金鑰導致認證失敗的問題。
+- **⏱️ Telegram 命令設置連線超時防護**:
+  - 為 `clear_old_commands` 與 `set_my_commands` 的 `requests.post` 補上 `timeout=WEB_REQUEST_TIMEOUT_SECONDS`，防止啟動時 Telegram API 卡頓導致行程無限期掛起。
+- **👥 `allowed_users` 白名單空白字元相容性修復**:
+  - 解析 `ALLOWED_USERS` 時自動移除字串前後空白 (`[u.strip() for u in allowed_users.split(',') if u.strip()]`)。
+- **🛡️ Chrome Headless 容器資料夾權限收緊**:
+  - 將 `setup_chrome_container.sh` 中的 `chmod -R 777` 修正為 `chmod -R 700`，保護 Chrome Session Profile 與 Cookie 不被本機非授權帳號存取。
+
 ## [2026-08-30] - Multi-Tier Fallback LLM Engine & Seamless High-Availability Failover
 
 ### ✨ Added

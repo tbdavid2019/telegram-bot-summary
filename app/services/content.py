@@ -1,6 +1,9 @@
 """Content classification and extraction helpers."""
 
+import ipaddress
 import re
+import socket
+import urllib.parse
 
 
 def split_user_input(text: str) -> list[str]:
@@ -9,6 +12,76 @@ def split_user_input(text: str) -> list[str]:
 
 def is_url(text: str) -> bool:
     return bool(re.compile(r"https?://\S+|www\.\S+").match(text))
+
+
+def is_safe_url(url: str) -> bool:
+    """Validate that a URL uses http/https and does not point to internal/private/loopback IPs or cloud metadata services (SSRF protection)."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        url_clean = url.strip()
+        # If a scheme is explicitly provided, it MUST be http or https
+        if "://" in url_clean:
+            scheme = url_clean.split("://", 1)[0].lower()
+            if scheme not in ("http", "https"):
+                return False
+            url_to_parse = url_clean
+        elif url_clean.startswith("//"):
+            url_to_parse = f"http:{url_clean}"
+        else:
+            url_to_parse = f"http://{url_clean}"
+
+        parsed = urllib.parse.urlparse(url_to_parse)
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
+
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        hostname_lower = hostname.lower()
+
+        # Block loopback, localhost, and cloud metadata hostnames
+        blocked_hostnames = {
+            "localhost",
+            "localhost.localdomain",
+            "ip6-localhost",
+            "ip6-loopback",
+            "metadata.google.internal",
+            "metadata.aws",
+            "169.254.169.254",
+            "0.0.0.0",
+        }
+        if hostname_lower in blocked_hostnames:
+            return False
+
+        if hostname_lower.endswith((".local", ".localhost", ".internal", ".lan", ".corp", ".localdomain")):
+            return False
+
+        # Direct IP check
+        try:
+            ip = ipaddress.ip_address(hostname_lower)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                return False
+            return True
+        except ValueError:
+            pass  # Domain name
+
+        # DNS resolution check
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for addr in addr_info:
+                ip_str = addr[4][0]
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                    return False
+        except (socket.gaierror, socket.herror, TimeoutError):
+            pass
+
+        return True
+    except Exception:
+        return False
+
 
 
 def convert_document_to_markdown(file_path: str) -> str:

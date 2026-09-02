@@ -305,6 +305,7 @@ chmod +x setup_chrome_container.sh
 
 ## Features
 
+- **7-Layer Defensive Security Architecture**：內建完整的 7 層安全審計防護，阻斷 SSRF（私有 IP/迴路/雲端中繼資料封鎖）、Prompt Injection 隔離標記、常數時間 Bearer Token 驗證、FastAPI 安全標頭、例外安全暫存檔生命週期清理與路徑穿越過濾。
 - **Multi-Tier Fallback LLM Engine**：支援多級 LLM 容錯降級機制 (`LLM1` -> `LLM2` -> `LLM3` -> `Groq Fallback`)，當主要模型遭遇 HTTP 400、429 超流、500/503 或網路逾時，秒級自動切換備用端點，並自動修復 Google Gemini OpenAI 格式相容性。
 - **Supports text**：處理純文本。
 - **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura`）。
