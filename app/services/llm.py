@@ -141,7 +141,7 @@ def get_configured_endpoints() -> List[LLMEndpoint]:
     # 5. Auto Groq fallback if GROQ_API_KEY is present and not explicitly configured in previous tiers
     groq_keys = _split_keys(os.environ.get("GROQ_API_KEY", "") or os.environ.get("GROQ_FALLBACK_KEYS", ""))
     if groq_keys:
-        groq_model = os.environ.get("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile").strip()
+        groq_model = os.environ.get("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b").strip()
         # Add Groq keys if they are not already in the endpoints
         for g_idx, g_key in enumerate(groq_keys):
             if not any(ep.api_key == g_key for ep in endpoints):
@@ -183,6 +183,8 @@ def _normalize_model_for_endpoint(model: str, base_url: str) -> str:
         cleaned = model.removeprefix("models/")
         if cleaned in ("gemini-flash-latest", "flash-latest"):
             return "gemini-1.5-flash"
+        if cleaned.startswith("gemini-3"):
+            return "gemini-2.5-flash"
         return cleaned
     return model
 
@@ -195,7 +197,7 @@ def _execute_chat_completion(
 ) -> str:
     """
     Send a POST request to the LLM endpoint's /chat/completions.
-    Supports intelligent intra-provider model alias failover on HTTP 400/404 before throwing.
+    Supports intelligent intra-provider model alias failover on HTTP 400/404/413 before throwing.
     Raises requests.exceptions.RequestException or ValueError on failure.
     """
     api_base_url = endpoint.clean_base_url
@@ -220,7 +222,7 @@ def _execute_chat_completion(
             clean_m = target_model.removeprefix("openai/")
             if clean_m not in models_to_try:
                 models_to_try.append(clean_m)
-        for alias in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b", "deepseek-r1-distill-llama-70b"):
+        for alias in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "qwen/qwen3.6-27b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b", "deepseek-r1-distill-llama-70b"):
             if alias not in models_to_try:
                 models_to_try.append(alias)
     elif "api.openai.com" in api_base_url:
@@ -252,7 +254,26 @@ def _execute_chat_completion(
             return content.strip()
         except requests.exceptions.HTTPError as http_err:
             status = getattr(getattr(http_err, 'response', None), 'status_code', None)
-            if status in (400, 404) and m != models_to_try[-1]:
+            if status == 413 and len(prompt) > 6000:
+                logger.warning(f"Payload too large (413) for {m}. Truncating prompt to 6000 chars and retrying...")
+                truncated_prompt = prompt[:6000] + "\n\n[⚠️ 內容過長超過模型容量限制，備援模型已自動截取前段進行結構化摘要]"
+                truncated_messages = list(additional_messages or [])
+                truncated_messages.append({"role": "user", "content": truncated_prompt})
+                try:
+                    retry_data = {
+                        "model": m,
+                        "messages": truncated_messages,
+                    }
+                    retry_resp = requests.post(url, headers=headers, json=retry_data, timeout=req_timeout)
+                    retry_resp.raise_for_status()
+                    retry_choices = retry_resp.json().get("choices", [])
+                    if retry_choices:
+                        content = retry_choices[0].get("message", {}).get("content", "")
+                        if content:
+                            return content.strip()
+                except Exception as retry_err:
+                    logger.warning(f"Retry with truncated prompt failed for {m}: {retry_err}")
+            if status in (400, 404, 413) and m != models_to_try[-1]:
                 last_err = http_err
                 continue
             raise

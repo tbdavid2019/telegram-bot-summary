@@ -35,6 +35,8 @@ def summarize(text_array, system_prompt, settings: Settings, selected_model=None
             settings,
             selected_model,
         )
+        if not summary or not summary.strip():
+            return "⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應或連線超時，請稍後再試或通知管理員。"
         summary = re.sub(r"(?<!\S)#(?=[^\s#])", r"\\#", summary)
         return summary + "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
     except Exception as error:

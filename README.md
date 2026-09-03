@@ -425,6 +425,7 @@ docker run -d \
 | `LLM3_API_KEY` / `LLM3_MODEL` / `LLM3_BASE_URL` | 備用 LLM 3 設定 (支援多級容錯，可擴展至 LLM10) |
 | `LLM_FALLBACK_MODELS` | 同節點備用模型列表 (逗號分隔) |
 | `GROQ_API_KEY` | GROQ API 金鑰 (用於 Whisper 語音轉文字與自動 Groq LLM 降級) |
+| `GROQ_FALLBACK_MODEL` | GROQ 自動備援模型名稱 (預設: `openai/gpt-oss-120b`，具備 413 Payload 自動截取保護) |
 | `LLM_TIMEOUT_SECONDS` | LLM 呼叫逾時時間 (預設: `180` 秒) |
 
 ### Bot Variables

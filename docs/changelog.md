@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-09-03] - Fix LLM Empty Summary Delivery, Groq Fallback 413 Truncation & Model Catalog Update
+
+### 🔧 Fixed
+- **🚨 阻絕空摘要與僅傳送頁尾之錯誤傳遞 (Empty Summary Delivery Fix)**:
+  - 修復 `summarize()` (`app/legacy.py`, `main.py`, `app/services/summarization.py`) 在所有備援 LLM 端點皆故障或返回空字串時，仍將機器人宣傳頁尾直接附加並送出的問題。
+  - 現在當 `call_gpt_api` 返回空字串時，系統會明確回傳 `⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應或連線超時，請稍後再試或通知管理員。`，並於日誌輸出 `[ERROR]`。
+- **💥 Groq 備援 HTTP 413 Payload Too Large 自動截取降級修復 (`app/services/llm.py`)**:
+  - 當 Gemini（支援 100 萬 token）處理長文本（如大型 YouTube 逐字稿）遭遇失效而降級至 Groq 時，因 Groq 免費級別有 8,000 TPM/請求長度限制導致 HTTP 413 錯誤。
+  - 新增 413 智慧自適應降級截取機制：當收到 413 且文字長度大於 6,000 字元時，自動於尾部加入提示並保留安全容量內文本重新發送，使 Groq 能成功生成結構化摘要。
+- **🤖 Groq 模型目錄過期與別名支援 (`app/services/llm.py`)**:
+  - 將 Groq 預設自動降級模型與別名列表同步至 Groq 目前現行可用模型（`openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`, `qwen/qwen3.6-27b`），避免因過期模型名（如 `llama-3.3-70b-versatile`）引發 HTTP 404/400 失敗。
+- **🔄 Gemini 非官方模型名自動映射相容**:
+  - 在 `_normalize_model_for_endpoint` 中將誤植之 `gemini-3*` 自動轉換相容為 `gemini-2.5-flash`，防止無效模型名稱直接導致 400 Bad Request。
+
 ## [2026-09-02] - Comprehensive 7-Layer Security Audit & Codebase Hardening
 
 ### ✨ Added

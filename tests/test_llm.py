@@ -204,6 +204,32 @@ class TestLLMService(unittest.TestCase):
         result = call_llm_with_fallback("Test all fail", endpoints=endpoints)
         self.assertEqual(result, "")
 
+    @patch("app.services.llm.requests.post")
+    def test_call_llm_payload_too_large_413_truncation_recovery(self, mock_post):
+        resp_413 = MagicMock()
+        resp_413.status_code = 413
+        http_err_413 = requests.exceptions.HTTPError("413 Client Error: Payload Too Large", response=resp_413)
+
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        resp_200.json.return_value = {
+            "choices": [{"message": {"content": "Summary of truncated text"}}]
+        }
+
+        # First call fails with 413, second call (with truncated payload) succeeds
+        mock_post.side_effect = [http_err_413, resp_200]
+
+        endpoint = LLMEndpoint(name="Groq Tier", model="openai/gpt-oss-120b", base_url="https://api.groq.com/openai/v1", api_key="k1")
+        long_prompt = "A" * 10000
+
+        result = call_llm_with_fallback(long_prompt, endpoints=[endpoint])
+        self.assertEqual(result, "Summary of truncated text")
+        self.assertEqual(mock_post.call_count, 2)
+        # Verify the second call received truncated content
+        second_call_messages = mock_post.call_args_list[1][1]["json"]["messages"]
+        self.assertTrue(len(second_call_messages[0]["content"]) < 10000)
+        self.assertIn("內容過長超過模型容量限制", second_call_messages[0]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

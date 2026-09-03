@@ -327,10 +327,13 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         # 呼叫 GPT API 生成摘要
         summary = call_gpt_api(prompt, system_messages, selected_model=selected_model)
 
+        if not summary or not summary.strip():
+            print("[ERROR] call_gpt_api returned empty summary.")
+            return "⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應或連線超時，請稍後再試或通知管理員。"
+
         # 針對 Hashtag 進行跳脫處理，避免被 Markdown 引擎誤判為 H1 標題
         # (將前方為空白或行首，且後方不為空白與 # 的 # 替換為 \#)
-        if summary:
-            summary = re.sub(r'(?<!\S)#(?=[^\s#])', r'\#', summary)
+        summary = re.sub(r'(?<!\S)#(?=[^\s#])', r'\#', summary)
 
         # 加入機器人宣傳語
         summary += "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
