@@ -84,25 +84,180 @@ def is_safe_url(url: str) -> bool:
 
 
 
+_magika_instance = None
+
+
+def get_magika():
+    """Lazy initialize and return singleton Magika instance."""
+    global _magika_instance
+    if _magika_instance is None:
+        try:
+            from magika import Magika
+
+            _magika_instance = Magika()
+        except Exception as e:
+            print(f"[WARN] Failed to initialize Magika ({e})")
+            return None
+    return _magika_instance
+
+
+def detect_file_type(file_path: str) -> dict:
+    """Detect file type, group, and MIME info using Google Magika (local CPU model inference).
+
+    Returns a dict with keys:
+        - label (str): canonical label, e.g. 'pdf', 'docx', 'mp3', 'txt', 'python'
+        - mime_type (str): MIME type, e.g. 'application/pdf', 'audio/mpeg'
+        - group (str): content category, e.g. 'document', 'audio', 'video', 'code', 'text', 'archive'
+        - description (str): human-readable format description
+        - extensions (list[str]): recommended file extensions
+        - is_text (bool): whether the content is plain text / code
+        - score (float): model confidence score (0.0 - 1.0)
+    """
+    m = get_magika()
+    if m is not None:
+        try:
+            from pathlib import Path
+
+            res = m.identify_path(Path(file_path))
+            if getattr(res, "ok", False):
+                out = res.output
+                return {
+                    "label": getattr(out, "label", "unknown"),
+                    "mime_type": getattr(out, "mime_type", "application/octet-stream"),
+                    "group": getattr(out, "group", "unknown"),
+                    "description": getattr(out, "description", ""),
+                    "extensions": list(getattr(out, "extensions", [])),
+                    "is_text": getattr(out, "is_text", False),
+                    "score": getattr(res, "score", 1.0),
+                }
+        except Exception as e:
+            print(f"[DEBUG] Magika identify_path failed ({e}), falling back to extension detection")
+
+    # Fallback when Magika is unavailable or encounters error
+    import mimetypes
+    import os
+
+    ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+    mime, _ = mimetypes.guess_type(file_path)
+    is_txt = ext in ("txt", "md", "csv", "json", "py", "xml", "log", "yaml", "yml", "ini", "sh", "js", "html", "css")
+    return {
+        "label": ext or "unknown",
+        "mime_type": mime or ("text/plain" if is_txt else "application/octet-stream"),
+        "group": "text" if is_txt else ("document" if ext in ("pdf", "docx", "pptx", "xlsx", "epub") else "unknown"),
+        "description": "Fallback mime guess",
+        "extensions": [ext] if ext else [],
+        "is_text": is_txt,
+        "score": 0.0,
+    }
+
+
+def transcribe_local_audio(file_path: str) -> str:
+    """Transcribe local audio file using Groq Whisper API (whisper-large-v3) with timestamped segments."""
+    import json
+    import os
+    import subprocess
+    import uuid
+    from pydub import AudioSegment
+
+    audio_file = AudioSegment.from_file(file_path)
+    chunk_size = 100 * 1000  # 100 seconds
+    chunks = [audio_file[i : i + chunk_size] for i in range(0, len(audio_file), chunk_size)]
+
+    groq_key = (os.environ.get("GROQ_API_KEY") or "").split(",")[0].strip() or "YOUR_GROQ_API_KEY"
+    asr_timeout = int(os.environ.get("ASR_TIMEOUT_SECONDS", "180"))
+
+    transcript = ""
+    created_temp_files = []
+    try:
+        for i, chunk in enumerate(chunks):
+            temp_file_path = f"/tmp/{uuid.uuid4()}.wav"
+            created_temp_files.append(temp_file_path)
+            chunk.export(temp_file_path, format="wav")
+            offset_seconds = i * (chunk_size / 1000.0)
+
+            curl_command = [
+                "curl",
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                "-H",
+                f"Authorization: Bearer {groq_key}",
+                "-H",
+                "Content-Type: multipart/form-data",
+                "-F",
+                f"file=@{temp_file_path}",
+                "-F",
+                "model=whisper-large-v3",
+                "-F",
+                "response_format=verbose_json",
+            ]
+
+            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=asr_timeout)
+            try:
+                response_json = json.loads(result.stdout)
+                chunk_transcript = format_whisper_segments(response_json, offset_seconds=offset_seconds)
+                transcript += chunk_transcript if chunk_transcript else response_json.get("text", "") + "\n"
+            except (KeyError, json.JSONDecodeError) as e:
+                print(f"[ERROR] Error decoding transcription response for chunk {i}: {e}")
+    finally:
+        for tmp in created_temp_files:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+
+    return transcript.strip()
+
+
 def convert_document_to_markdown(file_path: str) -> str:
-    """Convert file (PDF, Office, CSV, text, etc.) to markdown using anydoc with plain-text fallback."""
+    """Convert file (PDF, Office, CSV, text, etc.) to markdown using Magika content detection & anydoc with plain-text fallback."""
     import os
     import anydoc
 
+    file_info = detect_file_type(file_path)
+    is_text = file_info.get("is_text", False)
+    group = file_info.get("group", "")
+    label = file_info.get("label", "")
     ext = os.path.splitext(file_path)[1].lower()
-    if ext in (".txt", ".md", ".log", ".json", ".xml", ".yaml", ".yml"):
+
+    # If it's plain text or source code, read directly as text
+    if is_text or group in ("text", "code") or ext in (".txt", ".md", ".log", ".json", ".xml", ".yaml", ".yml", ".py", ".sh", ".js", ".html", ".css", ".sql", ".ini", ".env", ".csv"):
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
+                content = f.read()
+                if content.strip():
+                    return content
         except Exception:
             pass
 
+    # Unsupported executable or archive files
+    if group in ("executable", "archive") and ext not in (".docx", ".pptx", ".xlsx", ".epub", ".pdf"):
+        raise ValueError(f"不支援的檔案格式：{file_info.get('description', '')} ({label})。請提供文字、PDF 或 Office 辦公文件。")
+
+    # If file lacks extension, provide extension hint via temporary symlink so anydoc detects format
+    resolved_path = file_path
+    temp_symlink = None
+    if not ext and file_info.get("extensions"):
+        primary_ext = "." + file_info["extensions"][0]
+        temp_symlink = f"{file_path}{primary_ext}"
+        try:
+            if not os.path.exists(temp_symlink):
+                os.symlink(file_path, temp_symlink)
+            resolved_path = temp_symlink
+        except Exception:
+            resolved_path = file_path
+
     try:
-        return anydoc.to_markdown(file_path)
+        return anydoc.to_markdown(resolved_path)
     except Exception as e:
         print(f"[DEBUG] anydoc.to_markdown failed ({e}), falling back to direct text read")
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
+    finally:
+        if temp_symlink and os.path.islink(temp_symlink):
+            try:
+                os.unlink(temp_symlink)
+            except Exception:
+                pass
 
 
 def format_timestamp(seconds: float) -> str:

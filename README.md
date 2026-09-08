@@ -305,6 +305,8 @@ chmod +x setup_chrome_container.sh
 
 ## Features
 
+- **Google Magika AI File Type Identification & Smart Routing**：整合 Google 開源深度學習檔案識別引擎 `Magika`（100+ 種格式，精確率 >99%），在 Docker 鏡像建構階段即將 ONNX 模型固化封裝，執行期純本地 CPU 毫秒級推論（1~5ms，零網路開銷）。智慧識別上傳內容並自動分流（音訊自動轉錄逐字稿、文檔交由 AnyDoc 轉檔、純文字直接讀取、不支援二進位檔友善阻絕）。
+- **Audio Document Transcription (Whisper ASR)**：支援直接向 Telegram 機器人傳送錄音與音訊文件（`.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac`, `.aac`, `.opus`），自動以 Groq Whisper (`whisper-large-v3`, `verbose_json`) 分塊轉錄，附帶精準時間戳記逐字稿文字檔 (`.txt`) 並產出結構化 AI 核心重點摘要。
 - **7-Layer Defensive Security Architecture**：內建完整的 7 層安全審計防護，阻斷 SSRF（私有 IP/迴路/雲端中繼資料封鎖）、Prompt Injection 隔離標記、常數時間 Bearer Token 驗證、FastAPI 安全標頭、例外安全暫存檔生命週期清理與路徑穿越過濾。
 - **Multi-Tier Fallback LLM Engine**：支援多級 LLM 容錯降級機制 (`LLM1` -> `LLM2` -> `LLM3` -> `Groq Fallback`)，當主要模型遭遇 HTTP 400、429 超流、500/503 或網路逾時，秒級自動切換備用端點，並自動修復 Google Gemini OpenAI 格式相容性。
 - **Supports text**：處理純文本。
@@ -345,7 +347,7 @@ chmod +x setup_chrome_container.sh
 
 ### 💡 使用技巧
 
-1. **直接發送內容**: 文字、網址、各類文件檔案（PDF、Word、Excel、PPT、EPUB、CSV、TXT）直接拖曳傳送即可自動摘要，無需輸入命令。
+1. **直接發送內容**: 文字、網址、各類文件檔案（PDF、Word、Excel、PPT、EPUB、CSV、TXT）或直接傳送錄音/音訊檔（MP3、M4A、WAV、OGG、AAC 等），機器人會透過 Google Magika 自動識別內容類型，分流至 Whisper 逐字稿轉錄或 AnyDoc 文檔摘要，無需手動指定格式。
 2. **續問功能**: 完成摘要後，直接發送問題即可續問
 3. **語言切換**: 使用 `/lang` 切換語言後，之後的摘要都使用新語言
 4. **多輪對話**: 系統自動保留最近 3 輪對話，支援深入討論

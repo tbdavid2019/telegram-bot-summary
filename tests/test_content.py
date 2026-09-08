@@ -8,6 +8,9 @@ from app.services.content import (
     is_wiki_or_report_request,
     is_conversation_followup,
     sanitize_model_output,
+    detect_file_type,
+    convert_document_to_markdown,
+    transcribe_local_audio,
 )
 
 
@@ -91,6 +94,98 @@ class TestContentHelpers(unittest.TestCase):
         self.assertTrue(is_url("https://example.com"))
         self.assertTrue(is_url("http://test.org/abc"))
         self.assertFalse(is_url("just plain text"))
+
+    def test_detect_file_type_plain_text(self):
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"Hello world, this is a plain text file for testing.")
+            fpath = f.name
+        try:
+            info = detect_file_type(fpath)
+            self.assertIn(info["group"], ("text", "code"))
+            self.assertTrue(info["is_text"])
+            self.assertEqual(info["label"], "txt")
+            self.assertEqual(info["mime_type"], "text/plain")
+        finally:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
+    def test_detect_file_type_markdown(self):
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+            f.write(b"# Title\n\nThis is a markdown document.\n- Item 1\n- Item 2")
+            fpath = f.name
+        try:
+            info = detect_file_type(fpath)
+            self.assertIn(info["group"], ("text", "code"))
+            self.assertTrue(info["is_text"])
+            self.assertIn(info["label"], ("markdown", "txt"))
+        finally:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
+    def test_detect_file_type_fallback(self):
+        from unittest.mock import patch
+        with patch("app.services.content.get_magika", return_value=None):
+            info = detect_file_type("some/dummy/path.py")
+            self.assertEqual(info["label"], "py")
+            self.assertTrue(info["is_text"])
+            self.assertEqual(info["group"], "text")
+            self.assertEqual(info["score"], 0.0)
+
+    def test_convert_document_to_markdown_text(self):
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write("Line 1\nLine 2".encode("utf-8"))
+            fpath = f.name
+        try:
+            content = convert_document_to_markdown(fpath)
+            self.assertIn("Line 1", content)
+            self.assertIn("Line 2", content)
+        finally:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
+    def test_convert_document_to_markdown_unsupported_archive(self):
+        from unittest.mock import patch
+        fake_info = {
+            "group": "archive",
+            "label": "zip",
+            "description": "Zip archive",
+            "is_text": False,
+            "extensions": ["zip"],
+            "mime_type": "application/zip",
+        }
+        with patch("app.services.content.detect_file_type", return_value=fake_info):
+            with self.assertRaises(ValueError) as ctx:
+                convert_document_to_markdown("archive.zip")
+            self.assertIn("不支援的檔案格式", str(ctx.exception))
+
+    def test_transcribe_local_audio_mocked(self):
+        from unittest.mock import patch, MagicMock
+        import json
+
+        mock_audio = MagicMock()
+        mock_audio.__len__.return_value = 50000  # 50s
+        mock_audio.__getitem__.return_value = mock_audio
+
+        mock_resp = {
+            "text": "這是本地音訊轉錄測試",
+            "segments": [
+                {"start": 0.0, "end": 2.5, "text": "這是本地音訊轉錄測試"}
+            ]
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(mock_resp)
+
+        with patch("pydub.AudioSegment.from_file", return_value=mock_audio), \
+             patch("subprocess.run", return_value=mock_result), \
+             patch("os.path.exists", return_value=False):
+            transcript = transcribe_local_audio("/tmp/fake_audio.mp3")
+            self.assertIn("[00:00] 這是本地音訊轉錄測試", transcript)
 
 
 if __name__ == "__main__":

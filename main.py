@@ -31,6 +31,8 @@ from app.services.content import (
     is_wiki_or_report_request,
     is_conversation_followup,
     sanitize_model_output,
+    detect_file_type,
+    transcribe_local_audio,
 )
 from app.services.divination import (
     parse_tarot_command,
@@ -2270,22 +2272,55 @@ async def handle(action, update, context):
                 print(f"[DEBUG] file_path={file_path}")
                 await file.download_to_drive(file_path)
                 print(f"[DEBUG] 檔案已下載到 {file_path}")
-                
-                print("[DEBUG] 開始 AnyDoc 文件轉換")
-                try:
-                    text = await run_blocking(convert_document_to_markdown, file_path)
-                    print(f"[DEBUG] AnyDoc 轉換完成，text 長度={len(text)}")
-                except Exception as e:
-                    import traceback
-                    print(f"[ERROR] AnyDoc 轉換失敗: {e}")
-                    traceback.print_exc()
-                    raise
-                # 可選：處理進度訊息，這裡簡化為一則
-                progress = "正在處理檔案..."
-                if processing_message:
-                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
+
+                # 使用 Google Magika 進行本地快速內容類型識別
+                file_type_info = await run_blocking(detect_file_type, file_path)
+                print(f"[DEBUG] Magika 識別結果: {file_type_info}")
+                file_group = file_type_info.get("group", "")
+                file_label = file_type_info.get("label", "")
+                file_desc = file_type_info.get("description", "")
+
+                if file_group == "audio" or file_label in ("mp3", "m4a", "wav", "flac", "ogg", "aac", "opus", "wma"):
+                    progress = f"🎧 偵測到音訊檔案（{file_label.upper()}），正在使用 Whisper 進行語音轉錄..."
+                    if processing_message:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
+                    else:
+                        processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
+
+                    text = await run_blocking(transcribe_local_audio, file_path)
+                    if not text:
+                        raise ValueError("音訊轉文字未能辨識出任何內容，請確認音訊是否包含清晰語音。")
+
+                    # 若逐字稿長度大於 1000 字元，依規範發送 .txt 逐字稿文件
+                    if len(text) > 1000:
+                        import io
+                        bio = io.BytesIO(text.encode("utf-8"))
+                        bio.name = f"{filename or 'audio'}_transcript.txt"
+                        await context.bot.send_document(chat_id=chat_id, document=bio, filename=bio.name, caption="📄 音訊完整逐字稿（含時間戳記）")
+
+                elif file_group in ("archive", "executable"):
+                    unsupported_msg = f"⚠️ 暫不支援的檔案格式：{file_desc} ({file_label})。\n目前支援 PDF、Word、PPT、Excel、純文字、程式碼與各類常見音訊檔案。"
+                    if processing_message:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=unsupported_msg)
+                    else:
+                        await context.bot.send_message(chat_id=chat_id, text=unsupported_msg)
+                    return
                 else:
-                    processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
+                    progress = "正在處理檔案..."
+                    if processing_message:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=progress)
+                    else:
+                        processing_message = await context.bot.send_message(chat_id=chat_id, text=progress)
+
+                    print("[DEBUG] 開始 AnyDoc 文件轉換")
+                    try:
+                        text = await run_blocking(convert_document_to_markdown, file_path)
+                        print(f"[DEBUG] AnyDoc 轉換完成，text 長度={len(text)}")
+                    except Exception as e:
+                        import traceback
+                        print(f"[ERROR] AnyDoc 轉換失敗: {e}")
+                        traceback.print_exc()
+                        raise
 
                 # 直接對整個文本進行一次性摘要，不需要分塊處理
                 # 因為 LLM 可以處理高達 1,000,000 個 token

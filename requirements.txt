@@ -10,6 +10,9 @@ trafilatura==1.9.0
 # PDFs & Office Documents (AnyDoc by Firecrawl)
 firecrawl-anydoc
 
+# AI File Type Detection (Google Magika)
+magika>=1.0.3
+
 # Telegram
 python-telegram-bot==21.1.1
 

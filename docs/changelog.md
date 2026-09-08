@@ -1,5 +1,28 @@
 # Changelog
 
+## [2026-09-08] - Google Magika AI File Type Identification & Smart Routing
+
+### ✨ Added
+- **🧠 Google Magika 深度學習檔案內容類型識別 (`app/services/content.py`)**:
+  - 整合 Google 開源之 `magika`（100+ 種檔案類型，精確率 >99%），以輕量 CNN ONNX 模型進行純本地 CPU 毫秒級推論（單檔 1~5ms，RAM ~30MB）。
+  - 新增 `detect_file_type(file_path)`：回傳規範化之 `label`、`mime_type`、`group`（`document`, `audio`, `video`, `code`, `text`, `archive`, `executable` 等）、`description`、`extensions`、`is_text` 與信心分數 `score`。
+  - 支援單例模式惰性初始化 (`get_magika()`)，並於 Magika 不可用或未安裝時平滑降級至副檔名/MIME 猜測，保證 100% 執行期韌性。
+- **🎧 本地音訊檔案轉錄支援 (`transcribe_local_audio`)**:
+  - 新增 `transcribe_local_audio(file_path)`：當使用者以文件或音訊形式上傳錄音/音檔（`.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac`, `.aac`, `.opus`）時，透過 `pydub` 分塊並調用 Groq Whisper API (`whisper-large-v3`, `response_format=verbose_json`)，自動生成精準時間戳記逐字稿。
+  - 長文本遵循 Telegram 防刷屏與 4,096 字元限制規範，當逐字稿大於 1,000 字元時自動以 `.txt` 檔案發送，並接著由 LLM 產出結構化重點摘要。
+- **🐳 Dockerfile 模型預載入與離線鏡像構建驗證**:
+  - 在 `Dockerfile` 中加入 `RUN python3 -c "from magika import Magika; m = Magika(); print('Magika initialized successfully')"`，將 Magika 模型權重在 Build 階段固化於容器 Image Layer 內，容器執行期 100% 零聯網離線推論。
+
+### 🔄 Changed & Improved
+- **🔀 Telegram 文件處理智慧分流路由 (`app/legacy.py`, `main.py`)**:
+  - 徹底重構 `handle_file`：下載暫存檔後第一時間經由 Magika 判斷真實內容類別：
+    - **音訊類 (`group == "audio"`)**：分流至 Whisper ASR 轉錄並輸出逐字稿與摘要。
+    - **壓縮檔/執行檔類 (`group in ("archive", "executable")`)**：友善提示使用者檔案類型不支援，防止程式錯誤崩潰。
+    - **純文字/程式碼 (`is_text` 或 `group in ("text", "code")`)**：直接以 UTF-8 讀取加速處理。
+    - **文檔類 (`group == "document"`)**：如遇無副檔名或副檔名缺失之文件，自動根據 Magika 推薦之標準副檔名建立格式提示，讓 `firecrawl-anydoc` 順利完成 Markdown 轉檔。
+- **🧪 完整單元測試覆蓋 (`tests/test_content.py`, `tests/test_dockerfile.py`)**:
+  - 新增針對純文字、Markdown、降級容錯、不支援壓縮檔拋出例外、Whisper 音訊轉錄 mock 以及 Dockerfile/requirements.txt 內建檢查之單元測試，全數通過 (77/77 測試)。
+
 ## [2026-09-03] - Fix LLM Empty Summary Delivery, Groq Fallback 413 Truncation & Model Catalog Update
 
 ### 🔧 Fixed

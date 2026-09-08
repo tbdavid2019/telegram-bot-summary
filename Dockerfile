@@ -23,6 +23,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip3 install --disable-pip-version-check -r /app/requirements.txt
 RUN python3 -m pip install -U --pre "yt-dlp[default]"
 RUN python3 -c "import yt_dlp"
+RUN python3 -c "from magika import Magika; m = Magika(); print('Magika initialized successfully')"
 
 WORKDIR /app
 
