@@ -37,7 +37,10 @@ set -- "$@" -p 8001:8001 telegram-bot-summary
 "$@"
 
 docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest
-docker push tbdavid2019/telegram-bot-summary:latest
+docker push tbdavid2019/telegram-bot-summary:latest || true
+
+docker tag telegram-bot-summary ghcr.io/tbdavid2019/telegram-bot-summary:latest
+docker push ghcr.io/tbdavid2019/telegram-bot-summary:latest || true
 
 
 # docker run -d     --name telegram-bot-summary     --restart unless-stopped     --env-file .env    tbdavid2019/telegram-bot-summary:latest

@@ -380,9 +380,14 @@ yt-dlp --cookies-from-browser chrome -F "視頻URL" --skip-download
 詳細變更記錄請參閱 [Changelog](file:///home/bitnami/telegram-bot-summary/docs/changelog.md)。
 
 #### 3. 拉取 Docker 映像
-從 Docker Hub 拉取映像，請執行以下命令：
+支援從 **Docker Hub** 或 **GitHub Container Registry (GHCR)** 雙來源拉取映像：
+
 ```bash
+# 從 Docker Hub 拉取
 docker pull tbdavid2019/telegram-bot-summary:latest
+
+# 或從 GitHub Container Registry (GHCR) 拉取
+docker pull ghcr.io/tbdavid2019/telegram-bot-summary:latest
 ```
 
 #### 2. 運行 Docker 容器
@@ -479,15 +484,15 @@ docker run -d \
 當映像有新更新時，使用以下命令更新容器：
 
 ```bash
-```bash
-docker pull tbdavid2019/telegram-bot-summary:latest
+# 從 GHCR 更新 (或使用 tbdavid2019/telegram-bot-summary:latest)
+docker pull ghcr.io/tbdavid2019/telegram-bot-summary:latest
 docker stop summary-gpt-bot
 docker rm summary-gpt-bot
 docker run -d \
     --name summary-gpt-bot \
     --restart unless-stopped \
     --env-file example.env \
-    tbdavid2019/telegram-bot-summary:latest
+    ghcr.io/tbdavid2019/telegram-bot-summary:latest
 ```
 
 ---

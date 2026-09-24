@@ -121,7 +121,7 @@ class TestContentHelpers(unittest.TestCase):
             info = detect_file_type(fpath)
             self.assertIn(info["group"], ("text", "code"))
             self.assertTrue(info["is_text"])
-            self.assertIn(info["label"], ("markdown", "txt"))
+            self.assertIn(info["label"], ("markdown", "txt", "md"))
         finally:
             if os.path.exists(fpath):
                 os.remove(fpath)

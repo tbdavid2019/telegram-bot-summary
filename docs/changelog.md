@@ -1,6 +1,18 @@
 # Changelog
 
-## [2026-09-08] - Google Magika AI File Type Identification & Smart Routing
+## [2026-09-24] - GitHub Container Registry (GHCR) Dual-Publishing Support
+
+### ✨ Added
+- **📦 GitHub Container Registry (GHCR) 雙註冊中心發布支援**:
+  - 更新 `.github/workflows/docker-build.yml`：
+    - 加入 `permissions: contents: read, packages: write` 賦予 GITHUB_TOKEN 容器寫入權限。
+    - 新增 GHCR 自動登入步驟 (`docker/login-action@v3` via `ghcr.io`)。
+    - 在 `docker/metadata-action@v5` 配置雙 Image 標籤：同步發布至 `tbdavid2019/telegram-bot-summary` (Docker Hub) 與 `ghcr.io/tbdavid2019/telegram-bot-summary` (GitHub Packages)。
+  - 更新 `build.sh`：本地部署腳本亦同步追加 `ghcr.io/tbdavid2019/telegram-bot-summary:latest` 標籤與容錯推送。
+  - 更新 `README.md`：補充從 GHCR (`ghcr.io/tbdavid2019/telegram-bot-summary:latest`) 拉取與更新容器之指令說明。
+- **🧪 測試與環境相容性強化 (`tests/test_content.py`)**:
+  - `test_detect_file_type_markdown` 增加對本地未安裝 `magika` 輕量環境回傳 `md` 標籤之向下相容斷言。
+
 
 ### ✨ Added
 - **🧠 Google Magika 深度學習檔案內容類型識別 (`app/services/content.py`)**:
