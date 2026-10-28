@@ -1,5 +1,30 @@
 # Changelog
 
+## [2026-10-28] - Clef-Flash System One Intelligent Ad & Spam Decision Filter
+
+### ✨ Added
+- **🛡️ 自建 Clef-Flash System One 智慧廣告與垃圾訊息決策模型過濾 (`app/services/decision.py`)**:
+  - 整合自建 Clef-Flash System One 決策推論引擎（極速推論 <200ms、免外部 Token 費用），自動判定文本與網頁內容是否屬於商業行銷、詐騙引流或推廣廣告。
+  - **雙節點高可用容錯 (Dual-Node Failover)**：
+    - **主要節點 (Primary)**：`https://clef.create360.ai/v1/systemone`
+    - **備援節點 (Fallback 2)**：`https://clef.aiurl.tw/v1/systemone`
+  - **預設開啟與超時保護**：
+    - 決策過濾預設開啟 (`DECISION_AD_FILTER_ENABLED=true`)。
+    - 決策推論超時設為 30 秒 (`CLEF_TIMEOUT_SECONDS=30`)。
+    - **平滑降級機制 (Graceful Fallback)**：當主節點與備援節點皆失效或逾時，日誌記錄警告並自動作為正常內容放行，確保核心摘要功能 100% 不中斷。
+  - **三層式高效快取架構 (Multi-Tier Caching)**：
+    - 前人讀取過的內容（依據文字 SHA-256 與正規化 URL）立即儲存決策結果。
+    - 依序查驗：In-Memory 快取（執行緒鎖防競爭）$\rightarrow$ MongoDB 永久集合 (`bot_database.ad_decisions`) $\rightarrow$ 本地磁碟快取 (`.cache/ad_decisions.json`)。後續相同網址或文本直接命中快取，完全省去重複推論與 Token 消耗。
+- **📱 Telegram 廣告隱藏與強制查看摘要機制 (`app/legacy.py`, `main.py`)**:
+  - 當內容經判定為廣告時，自動攔截並隱藏摘要輸出，回傳防護提示訊息。
+  - 附帶 `[👁️ 仍要查看摘要]` 互動按鈕，若使用者確實需要總結廣告內容，點擊即可直接依快取內容強制產出摘要，不需重新上傳。
+  - 新增 `/adfilter` 機器人命令與 `set_adfilter:<on|off>` 按鈕，允許使用者查詢狀態或自由切換過濾開關。
+- **🌐 FastAPI 端點同步支援廣告過濾 (`app/api.py`, `api.py`)**:
+  - `SummarizeResponse` 新增 `is_ad: bool` 標籤。
+  - 於調用 LLM 前優先執行決策過濾，若判定為廣告則回傳 `status="hidden"` 與 `is_ad=True`，防止不必要的 Token 消耗。
+- **🧪 完整單元測試覆蓋 (`tests/test_decision.py`)**:
+  - 涵蓋主節點推論成功、主節點故障平滑切換備援節點、雙節點皆掛掉降級容錯、In-Memory / URL / Disk / MongoDB 快取命中以及 FastAPI 廣告攔截，99/99 測試全數通過。
+
 ## [2026-10-28] - Fix Dependabot Python-Markdown CVE & Support Pocket Casts (pca.st) Podcasts
 
 ### 🔧 Fixed

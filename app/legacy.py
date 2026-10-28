@@ -60,6 +60,11 @@ from app.services.podcast import (
     extract_pocketcasts_episode,
     get_pocketcasts_title,
 )
+from app.services.decision import (
+    is_decision_ad_filter_enabled,
+    is_advertisement_content,
+    CLEF_TIMEOUT_SECONDS,
+)
 from app.services.quick_reply import (
     get_summary_quick_reply_keyboard,
     detect_quick_reply_intent,
@@ -223,6 +228,7 @@ ANSWER_BOOK_API = os.environ.get("ANSWER_BOOK_API", "http://answerbook.david888.
 mongo_uri = os.environ.get("MONGO_URI", "")
 mongo_client = None
 summary_collection = None
+decision_collection = None
 if mongo_uri:
     mongo_client = MongoClient(
         mongo_uri,
@@ -230,6 +236,7 @@ if mongo_uri:
         connectTimeoutMS=MONGO_TIMEOUT_MS,
     )
     summary_collection = mongo_client["bot_database"]["summaries"]
+    decision_collection = mongo_client["bot_database"]["ad_decisions"]
 
 
 def save_summary(summary_data):
@@ -1192,6 +1199,10 @@ async def handle_show_context(update, context):
     """顯示當前對話上下文"""
     return await handle('show_context', update, context)
 
+async def handle_adfilter(update, context):
+    """查看或設定廣告決策過濾"""
+    return await handle('adfilter', update, context)
+
 async def handle_summarize(update, context):
      return await handle('summarize', update, context)
 
@@ -1230,6 +1241,66 @@ async def handle_button_click(update, context):
             await query.edit_message_text(
                 text=f"❌ 模型不可用: {selected_model}"
             )
+        return
+
+    # 處理廣告過濾設定按鈕
+    if query.data.startswith('set_adfilter:'):
+        action = query.data.split(':', 1)[1]
+        if action == "on":
+            context.user_data['ad_filter'] = True
+            await query.edit_message_text("🛡️ 廣告決策過濾已更新為：🟢 已開啟 (預設)")
+        else:
+            context.user_data['ad_filter'] = False
+            await query.edit_message_text("🛡️ 廣告決策過濾已更新為：🔴 已關閉")
+        return
+
+    # 處理強制查看廣告內容按鈕
+    if query.data.startswith('show_ad:'):
+        cache_id = query.data.split(':', 1)[1]
+        saved = context.user_data.get(f"ad_hidden_{cache_id}")
+        if not saved:
+            await query.answer("此內容暫存已過期，請重新發送網址或文字。", show_alert=True)
+            return
+
+        chat_id = update.effective_chat.id
+        status_msg = await query.message.reply_text("⚡ 正在為您強制生成摘要，請稍候...")
+        try:
+            text_array = saved["text_array"]
+            user_input = saved["user_input"]
+            language = context.user_data.get('language', 'zh-TW')
+            selected_model = context.user_data.get('selected_model', None)
+            summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
+            if is_url(user_input):
+                original_url = user_input
+                title = await run_blocking(get_web_title, user_input)
+                summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
+            else:
+                original_url = None
+                title = "短文之摘要"
+                summary_with_original = f"📌 \n{summary}\n"
+
+            context.user_data['conversation_history'] = {
+                'original_content': text_array,
+                'summary': summary,
+                'source_url': original_url or 'text input',
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'messages': [
+                    {"role": "user", "content": f"請總結以下內容:\n\n{text_array[0][:500]}"},
+                    {"role": "assistant", "content": summary}
+                ]
+            }
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=summary_with_original,
+                reply_markup=get_summary_quick_reply_keyboard(),
+            )
+        except Exception as e:
+            print(f"[ERROR] Force summarize ad failed: {e}")
+            await status_msg.edit_text(f"❌ 生成摘要失敗：{str(e)}")
         return
     
     # 處理摘要快捷切換按鈕 (Quick Reply Actions)
@@ -1548,6 +1619,7 @@ def set_my_commands(telegram_token):
         {"command": "boxstats", "description": "查看 888box 資產統計"},
         {"command": "wiki", "description": "發布至 David888 Wiki 知識庫"},
         {"command": "wikiread", "description": "讀取 David888 Wiki 頁面"},
+        {"command": "adfilter", "description": "查看或切換廣告決策過濾"},
     ]
     data = {"commands": commands}
     try:
@@ -1660,6 +1732,32 @@ async def handle(action, update, context):
                 chat_id=chat_id,
                 message_id=processing_message.message_id,
                 text=info_text
+            )
+        elif action == 'adfilter':
+            current_pref = context.user_data.get('ad_filter', None)
+            is_enabled = is_decision_ad_filter_enabled(current_pref)
+            status_str = "🟢 已開啟 (預設)" if is_enabled else "🔴 已關閉"
+
+            adfilter_text = (
+                f"🛡️ **【Clef 廣告決策過濾 (System One)】**\n\n"
+                f"當前狀態：{status_str}\n"
+                f"決策節點：自建 Clef-Flash (<200ms) + 備援節點容錯\n"
+                f"超時設定：30 秒\n"
+                f"功能說明：自動偵測並隱藏推廣廣告、行銷垃圾與投資詐騙引流訊息，省去不必要的 AI 總結與 Token 消耗。"
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("🟢 開啟過濾", callback_data='set_adfilter:on'),
+                    InlineKeyboardButton("🔴 關閉過濾", callback_data='set_adfilter:off')
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=processing_message.message_id,
+                text=adfilter_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
             )
         elif action == 'model':
             # 處理模型切換命令
@@ -2156,6 +2254,46 @@ async def handle(action, update, context):
                     return
 
                 if text_array:
+                    # 4. Clef 決策模型廣告過濾 (System One)
+                    user_ad_pref = context.user_data.get('ad_filter', None)
+                    if is_decision_ad_filter_enabled(user_ad_pref):
+                        is_ad, decision_data = await run_blocking(
+                            is_advertisement_content,
+                            text_array,
+                            url=user_input if is_url(user_input) else None,
+                            mongo_collection=decision_collection,
+                            timeout=CLEF_TIMEOUT_SECONDS,
+                        )
+                        if is_ad:
+                            if show_processing and processing_message:
+                                try:
+                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                                except Exception:
+                                    pass
+
+                            cache_id = decision_data.get("cache_id") or str(uuid.uuid4())[:8]
+                            context.user_data[f"ad_hidden_{cache_id}"] = {
+                                "text_array": text_array,
+                                "user_input": user_input,
+                            }
+                            keyboard = InlineKeyboardMarkup([
+                                [InlineKeyboardButton("👁️ 仍要查看摘要", callback_data=f"show_ad:{cache_id}")]
+                            ])
+                            title_hint = ""
+                            if is_url(user_input):
+                                t = await run_blocking(get_web_title, user_input)
+                                if t and "無法下載" not in t and "抓取過程" not in t:
+                                    title_hint = f"📌 {t}\n\n"
+
+                            ad_msg = (
+                                f"{title_hint}"
+                                f"🚫 **【廣告內容已自動隱藏】**\n\n"
+                                f"經 Clef 決策模型判定，此內容包含高度商業宣傳、廣告行銷或垃圾訊息，已自動隱藏。\n\n"
+                                f"💡 若您仍需要對此內容生成摘要，可點擊下方按鈕強制查看。"
+                            )
+                            await context.bot.send_message(chat_id=chat_id, text=ad_msg, reply_markup=keyboard, parse_mode="Markdown")
+                            return
+
                     # 獲取用戶語言偏好和選擇的模型
                     language = context.user_data.get('language', 'zh-TW')
                     selected_model = context.user_data.get('selected_model', None)
@@ -2424,6 +2562,7 @@ async def main():
         boxstats_handler = CommandHandler('boxstats', handle_boxstats)
         wiki_handler = CommandHandler('wiki', handle_wiki)
         wikiread_handler = CommandHandler('wikiread', handle_wikiread)
+        adfilter_handler = CommandHandler('adfilter', handle_adfilter)
         set_my_commands(telegram_token)
         summarize_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize)
         file_handler = MessageHandler(filters.Document.ALL, handle_file)
@@ -2444,6 +2583,7 @@ async def main():
         application.add_handler(boxstats_handler)
         application.add_handler(wiki_handler)
         application.add_handler(wikiread_handler)
+        application.add_handler(adfilter_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

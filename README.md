@@ -185,10 +185,35 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        ...[社群爆款 Hook + 重點條列 + Emoji + Hashtags]
 ```
 
+### 場景 12: 🛡️ Clef 決策模型廣告過濾與強制查看
+```
+👤 用戶: [傳送含有高宣傳廣告、股市飆股引流或行銷文案的連結/短文]
+🤖 Bot: 🚫 【廣告內容已自動隱藏】
+
+       經 Clef 決策模型判定，此內容包含高度商業宣傳、廣告行銷或垃圾訊息，已自動隱藏。
+
+       💡 若您仍需要對此內容生成摘要，可點擊下方按鈕強制查看。
+       [按鈕: 👁️ 仍要查看摘要]
+
+👤 用戶: [點擊 👁️ 仍要查看摘要]
+🤖 Bot: ⚡ 正在為您強制生成摘要，請稍候...
+       📌 [廣告內容標題]
+       [輸出完整摘要與重點整理]
+
+👤 用戶: /adfilter
+🤖 Bot: 🛡️ 廣告決策過濾設定 (Ad Filter)
+       當前狀態：🟢 已開啟 (預設)
+       決策節點：自建 Clef-Flash (<200ms) + 備援節點容錯
+       超時設定：30 秒
+       功能說明：自動偵測並隱藏推廣廣告、行銷垃圾與投資詐騙引流訊息，省去不必要的 AI 總結與 Token 消耗。
+       [按鈕: 🟢 開啟過濾]  [按鈕: 🔴 關閉過濾]
+```
+
 ---
 
 ## 核心與新增功能
 
+- **🛡️ Clef-Flash System One 決策模型廣告與垃圾訊息智慧過濾**：整合自建 Clef-Flash 決策推論引擎（極速推論 <200ms、免外部 Token 費用），採用雙節點高可用容錯（Primary: `https://clef.create360.ai/v1/systemone` | Fallback: `https://clef.aiurl.tw/v1/systemone`），預設開啟並設定 30 秒逾時保護。若判定為廣告行銷訊息將直接隱藏輸出，並附帶 `[👁️ 仍要查看摘要]` 按鈕供用戶隨時強制查看；支援三層式快取架構（Memory $\rightarrow$ MongoDB $\rightarrow$ Disk），後續用戶讀取相同內容無需重複推論；雙節點皆異常時自動平滑降級放行，確保系統 100% 穩定可用。
 - **🎙️ Pocket Casts 與 pca.st 短網址深度整合**：原生支援 Pocket Casts (`pocketcasts.com`, `play.pocketcasts.com`) 與官方短網址 (`pca.st`)，自動解析單集 UUID 並透過 Pocket Casts API 直接鎖定單集音訊與真實標題，無懼 CloudFront/AWS WAF 挑戰，經由 Whisper 轉錄輸出高精確逐字稿與重點摘要。
 - **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！
 - **⚡ 5 段式結構化摘要與推薦續問**：標準產出容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個深入續問問題，兼具深度與互動性。
@@ -308,6 +333,7 @@ chmod +x setup_chrome_container.sh
 
 ## Features
 
+- **Clef-Flash System One Intelligent Ad & Spam Filtering**：原生整合自建 Clef 決策模型（推論延遲 <200ms），具備雙節點自動容錯備援（`clef.create360.ai` 與 `clef.aiurl.tw`），預設開啟並具備 30 秒防護逾時。自動識別商業推廣、行銷文案與投資詐騙訊息並隱藏輸出，附帶記憶體、MongoDB 與本地磁碟多層快取，並提供 `/adfilter` 開關與 Telegram 隨點強制查看按鈕。
 - **Google Magika AI File Type Identification & Smart Routing**：整合 Google 開源深度學習檔案識別引擎 `Magika`（100+ 種格式，精確率 >99%），在 Docker 鏡像建構階段即將 ONNX 模型固化封裝，執行期純本地 CPU 毫秒級推論（1~5ms，零網路開銷）。智慧識別上傳內容並自動分流（音訊自動轉錄逐字稿、文檔交由 AnyDoc 轉檔、純文字直接讀取、不支援二進位檔友善阻絕）。
 - **Audio Document Transcription (Whisper ASR)**：支援直接向 Telegram 機器人傳送錄音與音訊文件（`.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac`, `.aac`, `.opus`），自動以 Groq Whisper (`whisper-large-v3`, `verbose_json`) 分塊轉錄，附帶精準時間戳記逐字稿文字檔 (`.txt`) 並產出結構化 AI 核心重點摘要。
 - **7-Layer Defensive Security Architecture**：內建完整的 7 層安全審計防護，阻斷 SSRF（私有 IP/迴路/雲端中繼資料封鎖）、Prompt Injection 隔離標記、常數時間 Bearer Token 驗證、FastAPI 安全標頭、例外安全暫存檔生命週期清理與路徑穿越過濾。
@@ -348,6 +374,7 @@ chmod +x setup_chrome_container.sh
 | /boxstats | 查看 888box 當前儲存的資產總數與分類統計 |
 | /wiki [標題/內容] | 發布至 David888 Wiki 知識庫 (產出公開好讀版與投影片) |
 | /wikiread <路徑> | 讀取 David888 Wiki 頁面內容 |
+| /adfilter | 查看或切換廣告決策過濾狀態 (預設開啟，附帶隨點強制查看按鈕) |
 
 ### 💡 使用技巧
 
@@ -438,6 +465,15 @@ docker run -d \
 | `GROQ_API_KEY` | GROQ API 金鑰 (用於 Whisper 語音轉文字與自動 Groq LLM 降級) |
 | `GROQ_FALLBACK_MODEL` | GROQ 自動備援模型名稱 (預設: `openai/gpt-oss-120b`，具備 413 Payload 自動截取保護) |
 | `LLM_TIMEOUT_SECONDS` | LLM 呼叫逾時時間 (預設: `180` 秒) |
+
+### Clef 決策模型變數 (廣告與垃圾訊息智慧過濾)
+
+| Environment Variable | Description |
+|-----------------------|-------------|
+| `CLEF_PRIMARY_URL` | 主要 Clef 決策節點 (預設: `https://clef.create360.ai/v1/systemone`) |
+| `CLEF_FALLBACK_URL` | 備援 Clef 決策節點 (預設: `https://clef.aiurl.tw/v1/systemone`) |
+| `CLEF_TIMEOUT_SECONDS` | Clef 決策模型呼叫逾時時間 (預設: `30` 秒) |
+| `DECISION_AD_FILTER_ENABLED` | 是否預設開啟廣告與行銷垃圾訊息過濾 (預設: `true`) |
 
 ### Bot Variables
 

@@ -62,6 +62,7 @@ class SummarizeResponse(BaseModel):
     title: str = Field(..., description="The resolved title of the content.")
     original_url: Optional[str] = Field(None, description="The original URL if the input was a URL.")
     summary: str = Field(..., description="The Markdown-formatted summary.")
+    is_ad: bool = Field(False, description="Whether the content was flagged as an advertisement or promotional spam.")
 
 @app.get("/health")
 def health_check():
@@ -126,8 +127,26 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Could not extract any content from input."
             )
+
+        # 2. Check ad filter via Clef decision model
+        from app.services.decision import is_decision_ad_filter_enabled, is_advertisement_content
+        if is_decision_ad_filter_enabled():
+            is_ad, decision_data = await run_blocking(
+                is_advertisement_content,
+                text_array,
+                url=user_input if is_url(user_input) else None,
+            )
+            if is_ad:
+                title = await run_blocking(get_web_title, user_input) if is_url(user_input) else "Text Summary"
+                return SummarizeResponse(
+                    status="hidden",
+                    title=title,
+                    original_url=user_input if is_url(user_input) else None,
+                    summary="🚫 內容已隱藏：經 Clef 決策模型判定為商業廣告或垃圾行銷訊息。",
+                    is_ad=True,
+                )
             
-        # 2. Summarize the text array
+        # 3. Summarize the text array
         summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
         
         # 3. Determine title and original url

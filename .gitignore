@@ -30,6 +30,7 @@ __pycache__/
 htmlcov/
 dist/
 build/
+.cache/
 
 # Temporary media and downloads
 /tmp/
