@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-10-28] - Fix Dependabot Python-Markdown CVE & Support Pocket Casts (pca.st) Podcasts
+
+### 🔧 Fixed
+- **🛡️ Dependabot CVE-2025-69534 / GHSA-5wmx-573v-2qwq 安全漏洞修復 (`requirements.txt`)**:
+  - 將 `markdown==3.7` 升級為 `markdown>=3.8.1`，修復惡意 HTML 標記序列導致 `html.parser.HTMLParser` 拋出未捕捉 AssertionError 造成拒絕服務 (DoS) 的安全漏洞。
+
+### ✨ Added
+- **🎙️ Pocket Casts 與 pca.st 短網址深度整合支援 (`app/services/podcast.py`)**:
+  - 新增 `app/services/podcast.py` 獨立模組：
+    - `is_pocketcasts_url(url)`：支援 `pca.st`、`pocketcasts.com`、`play.pocketcasts.com` 及其各子網域。
+    - `resolve_pocketcasts_url(url)`：自動解析 Pocket Casts 官方短網址 `https://pca.st/<code>`，透過 HTTP 重定向與現代瀏覽器 User-Agent 取得標準 Podcast 頁面網址。
+    - `extract_pocketcasts_episode(url)`：解析 Podcast UUID 與 Episode UUID，直接對接 Pocket Casts 官方 API (`podcast-api.pocketcasts.com/podcast/full/{uuid}`)，精準鎖定用戶指定的單集音訊（或預設最新一集），直接取得 CDN MP3 串流網址、標題與長度，並透過 `@lru_cache` 實現記憶體快取。
+    - `get_pocketcasts_title(url)`：提供格式化之集數與節目名稱（例如 `EP718 你在「財富階梯」的哪一階？你想上升到哪一階？你打算怎麼做？ - 大人的Small Talk`）。
+- **🧪 完整單元測試覆蓋 (`tests/test_podcast.py`)**:
+  - 涵蓋 URL 格式驗證、短網址重定向解析、特定單集與最新單集抓取、API 容錯與 SSRF 防護、快取命中以及與 `process_pocketcasts_url`、`get_web_title` 之整合測試，全數通過 (90/90 測試)。
+
+### 🔄 Changed & Improved
+- **🔀 雙進入點同步優化 (`app/legacy.py`, `main.py`)**:
+  - 更新 `process_pocketcasts_url`：由原先僅能抓取 RSS 第一集最新單集，升級為可精準下載用戶指定的 Pocket Casts 單集音訊並進行 Whisper 轉錄。
+  - 更新 `get_web_title`：支援 Pocket Casts 網址直接呈現真實節目與單集標題，避免原先網頁抓取被 CloudFront/AWS WAF 阻擋回傳「無法下載該網頁的內容。」之異常。
+  - 更新音訊下載串流請求，附加現代瀏覽器 User-Agent 標頭以防止音訊伺服器擋爬蟲。
+
 ## [2026-09-24] - GitHub Container Registry (GHCR) Dual-Publishing Support
 
 ### ✨ Added

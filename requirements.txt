@@ -31,7 +31,7 @@ beautifulsoup4
 lxml
 pymongo
 feedparser
-markdown==3.7
+markdown>=3.8.1
 fastapi
 uvicorn
 

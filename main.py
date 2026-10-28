@@ -54,6 +54,12 @@ from app.services.wiki import (
     read_wiki_page,
     append_wiki_page,
 )
+from app.services.podcast import (
+    is_pocketcasts_url,
+    resolve_pocketcasts_url,
+    extract_pocketcasts_episode,
+    get_pocketcasts_title,
+)
 from app.services.quick_reply import (
     get_summary_quick_reply_keyboard,
     detect_quick_reply_intent,
@@ -454,7 +460,7 @@ def is_supported_by_ytdlp(url):
         r'coursera\.org',
         r'khanacademy\.org',
         r'archive\.org',
-        r'pocketcasts\.com/podcast',
+        r'pocketcasts\.com|pca\.st',
         r'player\.soundon\.fm',
         r'podcasts\.apple\.com'
     ]
@@ -719,10 +725,6 @@ def audio_transcription(video_url):
                 except Exception:
                     pass    
 
-
-def is_pocketcasts_url(url):
-    """檢查是否為 Pocket Casts URL"""
-    return 'pocketcasts.com/podcast' in url.lower()
 
 def is_soundon_url(url):
     """檢查是否為 SoundOn URL"""
@@ -1028,29 +1030,37 @@ def download_and_transcribe_podcast(audio_url):
 
 def process_pocketcasts_url(url):
     """
-    處理 Pocket Casts URL,提取並轉錄最新的 podcast episode
+    處理 Pocket Casts URL，提取指定集數或最新的 podcast episode 並轉錄
+    支援 pca.st 短網址與 pocketcasts.com 完整網址
     """
     try:
         if not is_safe_url(url):
             return ["不支援或受保護的私有/內部網路網址。"]
-        # 1. 從 Pocket Casts 頁面提取 RSS feed URL
+
+        # 1. 優先透過 Pocket Casts API 取得指定集數或最新集數的音訊連結
+        episode_info = extract_pocketcasts_episode(url)
+        if episode_info and episode_info.get("audio_url"):
+            audio_url = episode_info["audio_url"]
+            print(f"Processing Pocket Casts episode via API: {episode_info.get('episode_title')}")
+            return download_and_transcribe_podcast(audio_url)
+
+        # 2. 備援方式：從 Pocket Casts 頁面提取 RSS feed URL
         rss_url = extract_rss_from_pocketcasts(url)
         if not rss_url:
-            return ["無法從 Pocket Casts 頁面提取 RSS feed。"]
-        
-        # 2. 從 RSS feed 獲取最新 episode
+            return ["無法從 Pocket Casts 提取音訊或 RSS feed。"]
+
+        # 3. 從 RSS feed 獲取最新 episode
         episodes = get_latest_podcast_episode(rss_url, max_episodes=1)
         if not episodes:
             return ["無法從 RSS feed 獲取 podcast episodes。"]
-        
+
         episode = episodes[0]
-        print(f"Processing episode: {episode['title']}")
-        
-        # 3. 下載並轉錄音頻
+        print(f"Processing episode via RSS: {episode['title']}")
+
+        # 4. 下載並轉錄音頻
         transcript_chunks = download_and_transcribe_podcast(episode['audio_url'])
-        
         return transcript_chunks
-        
+
     except Exception as e:
         print(f"Error processing Pocket Casts URL: {e}")
         return ["處理 Pocket Casts URL 時發生錯誤。"]
@@ -1440,8 +1450,14 @@ def get_video_title(video_url):
 def get_web_title(user_input):
     """
     根據用戶提供的 URL，抓取網頁內容並提取標題。
-    支援所有 yt-dlp 支援的影片網站以及一般網頁
+    支援所有 yt-dlp 支援的影片網站、Podcast 網站以及一般網頁
     """
+    # 檢查是否為 Pocket Casts URL (支援 pca.st 短網址與 pocketcasts.com)
+    if is_pocketcasts_url(user_input):
+        podcast_title = get_pocketcasts_title(user_input)
+        if podcast_title:
+            return podcast_title
+
     # 首先檢查是否為 yt-dlp 支援的影片網站
     if is_supported_by_ytdlp(user_input):
         return get_video_title(user_input)

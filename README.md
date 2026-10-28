@@ -39,10 +39,12 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 ### 場景 3: Podcast 摘要
 ```
-👤 用戶: https://pocketcasts.com/podcast/xxx
-🤖 Bot: [自動識別為 podcast]
-       [提取 RSS feed → 獲取最新 episode]
-       [下載音頻 → Whisper 轉錄 → 生成摘要]
+👤 用戶: https://pca.st/9wirf5m8 或 https://pocketcasts.com/podcast/...
+🤖 Bot: 📌 EP718 你在「財富階梯」的哪一階？你想上升到哪一階？你打算怎麼做？ - 大人的Small Talk
+
+       [自動識別為 Pocket Casts / pca.st 短網址]
+       [自動對接官方 API 精準定位特定單集或最新一集音訊]
+       [下載音頻 → Whisper 轉錄 → 生成真實標題與結構化摘要]
 
 👤 用戶: 這集主要在討論什麼？
 🤖 Bot: 💬 續問回答: [基於 podcast 內容回答]
@@ -187,6 +189,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 ## 核心與新增功能
 
+- **🎙️ Pocket Casts 與 pca.st 短網址深度整合**：原生支援 Pocket Casts (`pocketcasts.com`, `play.pocketcasts.com`) 與官方短網址 (`pca.st`)，自動解析單集 UUID 並透過 Pocket Casts API 直接鎖定單集音訊與真實標題，無懼 CloudFront/AWS WAF 挑戰，經由 Whisper 轉錄輸出高精確逐字稿與重點摘要。
 - **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！
 - **⚡ 5 段式結構化摘要與推薦續問**：標準產出容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個深入續問問題，兼具深度與互動性。
 - **David888 Wiki 知識庫發布（LLM 深度報告好讀版）**：整合 `https://wiki.david888.com/api`，當使用者交代 LLM 撰寫長篇分析報告時，LLM 會自動將完整 Markdown 發布至 David888 Wiki，並回傳排版優美的公開閱讀連結（`shareUrl`）與 Reveal 2D 簡報模式（`presentUrl`）；亦可透過 `/wiki` 手動一鍵發布或 `/wikiread` 遠端讀取。
