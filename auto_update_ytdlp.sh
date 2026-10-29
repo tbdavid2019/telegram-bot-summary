@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CONTAINER_NAME="telegram-bot-summary"
-DIR="/home/bitnami/telegram-bot-summary"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$DIR/auto_update.log"
 IMAGE_TAG="tbdavid2019/telegram-bot-summary:latest"
 
