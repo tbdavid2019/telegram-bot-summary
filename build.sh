@@ -9,6 +9,8 @@
 set -eu
 
 docker build --no-cache -t telegram-bot-summary .
+docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest
+docker tag telegram-bot-summary ghcr.io/tbdavid2019/telegram-bot-summary:latest
 
 if [ "${DEPLOY_CONFIRM:-0}" != "1" ]; then
     echo "Image built. To replace the running container, run: DEPLOY_CONFIRM=1 ./build.sh"
@@ -21,6 +23,8 @@ docker rm telegram-bot-summary 2>/dev/null || true
 set -- docker run -d \
     --name telegram-bot-summary \
     --restart unless-stopped \
+    --label com.centurylinklabs.watchtower.enable=true \
+    --label com.centurylinklabs.watchtower.scope=summary \
     --env-file .env
 
 if [ -n "${CHROME_DATA_DIR:-}" ]; then
@@ -33,13 +37,10 @@ if [ -f "cookies.txt" ]; then
     set -- "$@" -v "$PWD/cookies.txt:/app/cookies.txt:ro"
 fi
 
-set -- "$@" -p 8001:8001 telegram-bot-summary
+set -- "$@" -p 8001:8001 tbdavid2019/telegram-bot-summary:latest
 "$@"
 
-docker tag telegram-bot-summary tbdavid2019/telegram-bot-summary:latest
 docker push tbdavid2019/telegram-bot-summary:latest || true
-
-docker tag telegram-bot-summary ghcr.io/tbdavid2019/telegram-bot-summary:latest
 docker push ghcr.io/tbdavid2019/telegram-bot-summary:latest || true
 
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-10-29] - Restore Automated CD Pipeline & Deploy Dedicated Scoped Watchtower
+
+### 🔧 Fixed & Improved
+- **🔄 全面修復私有伺服器 (`git.glsoft.ai`) 之自動持續部署 (CD) 機制**:
+  - **斷線根本原因分析**：
+    - 私有主機 `git.glsoft.ai` 原先的全域 `watchtower` 容器於 2026-09-22 因主機上新增其它 scoped watchtower 實例引發衝突而停止運行。
+    - 缺少專屬的 summary 監控實例，且舊版容器未設定 Watchtower scope 標籤與遠端映像檔命名空間 (`tbdavid2019/`)，導致 Docker Hub pull 失敗，使 `@oli_summary_bot` 自動更新中斷達 5 週。
+  - **部署專屬 `watchtower-summary` 容器**：
+    - 在 `git.glsoft.ai` 部署獨立容器 `watchtower-summary`，配置 `--scope summary --label-enable`、`WATCHTOWER_POLL_INTERVAL=60`、`DOCKER_API_VERSION=1.44`。
+    - 清理 5 週前遺留之失效全域 watchtower 實例。
+  - **標準化容器標籤與啟動腳本 (`build.sh`)**：
+    - 更新 `build.sh`，容器啟動參數強制帶入 `--label com.centurylinklabs.watchtower.enable=true` 與 `--label com.centurylinklabs.watchtower.scope=summary`，並指名官方 Registry 映像檔 `tbdavid2019/telegram-bot-summary:latest`。
+    - 實機日誌驗證確認 `watchtower-summary` 每 60 秒定期輪詢 Docker Hub，狀態回傳 `Failed=0 Scanned=1 Updated=0` 正常巡檢。
+- **📖 更新架構與部署文檔 (`AGENTS.md`, `README.md`)**:
+  - 精確記錄雙主機之 Watchtower 運作拓撲（`aicreate360.com` 全域監控 vs `git.glsoft.ai` 獨立 Scoped 監控）。
+
+
 ## [2026-10-28] - Clef-Flash System One Intelligent Ad & Spam Decision Filter
 
 ### ✨ Added

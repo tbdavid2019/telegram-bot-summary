@@ -626,3 +626,18 @@ API_PORT=8001
 ### 3. LLM 介接 (SKILL.md)
 
 專案根目錄下附有專門為 LLM 說明的指令檔 [`SKILL.md`](file:///home/bitnami/telegram-bot-summary/SKILL.md)，包含完整請求格式與 **OpenAPI 3.0 YAML** 規格，可直接匯入 OpenAI Custom GPTs Actions 或 Prompt 系統。
+
+---
+
+## 🚀 CI/CD 與自動化部署機制 (Continuous Deployment)
+
+本專案採用 **GitHub Actions + Dual-Registry + Scoped Watchtower** 的零停機持續整合與部署架構：
+
+1. **持續整合 (CI - GitHub Actions)**：
+   - 每當程式推送到 `main` 分支，`.github/workflows/docker-build.yml` 自動觸發。
+   - 映像檔同時雙發布至 **Docker Hub** (`tbdavid2019/telegram-bot-summary:latest`) 與 **GitHub Container Registry** (`ghcr.io/tbdavid2019/telegram-bot-summary:latest`)。
+
+2. **持續部署 (CD - Watchtower 自動拉取與滾動重啟)**：
+   - **公開 Bot (`@quantaar_bot` @ `aicreate360.com`)**：由主機全域 `watchtower` 容器每 60 秒輪詢更新。
+   - **私有 Bot (`@oli_summary_bot` @ `git.glsoft.ai`)**：由專屬 `watchtower-summary` 容器（`--scope summary --label-enable`）每 60 秒輪詢更新，自動拉取最新映像檔並無縫重啟容器。
+
