@@ -33,6 +33,8 @@ from app.services.content import (
     sanitize_model_output,
     detect_file_type,
     transcribe_local_audio,
+    needs_title_localization,
+    localize_title,
 )
 from app.services.divination import (
     parse_tarot_command,
@@ -541,15 +543,23 @@ def clean_subtitle(subtitle_content):
     
     return subtitle_content.strip()
 
+PREFERRED_SUBTITLE_LANGS = ['zh-Hant', 'zh-TW', 'zh-HK', 'zh-Hans', 'zh-CN', 'zh', 'en']
+
+PREFERRED_AUDIO_FORMAT = (
+    'bestaudio[language=zh-Hant]/bestaudio[language=zh-TW]/bestaudio[language=zh-HK]/'
+    'bestaudio[language=zh]/bestaudio[language=zh-Hans]/bestaudio[language=zh-CN]/'
+    'bestaudio[language=en]/bestaudio[protocol^=http]/bestaudio/best'
+)
+
 def extract_video_transcript(video_url):
     """
-    通用的影片字幕提取函數，支援所有 yt-dlp 支援的網站
+    通用的影片字幕提取函數，支援所有 yt-dlp 支援的網站（優先選取繁體/簡體中文，其次英文）
     """
     ydl_opts = {
         'writesubtitles': True,
         'writeautomaticsub': True,
         'skip_download': True,
-        'subtitleslangs': ['en','zh-Hant', 'zh-Hans', 'zh-TW', 'zh'],
+        'subtitleslangs': PREFERRED_SUBTITLE_LANGS,
         'outtmpl': '/tmp/%(id)s.%(ext)s',
         'extractor_args': {'youtube': {'player_client': ['default,-web_safari']}},
         'force_ipv4': True,
@@ -567,14 +577,26 @@ def extract_video_transcript(video_url):
                 ydl.download([video_url])
                 
                 subtitle_content = None
-                for lang in ['en','zh-Hant', 'zh-Hans', 'zh']:
+                for lang in PREFERRED_SUBTITLE_LANGS:
                     subtitle_file = f"/tmp/{video_id}.{lang}.vtt"
                     if os.path.exists(subtitle_file):
                         with open(subtitle_file, 'r', encoding='utf-8') as file:
                             subtitle_content = file.read()
-                        os.remove(subtitle_file)
+                        try:
+                            os.remove(subtitle_file)
+                        except Exception:
+                            pass
                         print(f"Found and using {lang} subtitle.")
                         break
+
+                # 清理同一影片下載的其他語言字幕暫存檔，避免磁碟殘留
+                for lang in PREFERRED_SUBTITLE_LANGS:
+                    leftover = f"/tmp/{video_id}.{lang}.vtt"
+                    if os.path.exists(leftover):
+                        try:
+                            os.remove(leftover)
+                        except Exception:
+                            pass
 
                 if subtitle_content:
                     # 清理字幕內容
@@ -638,9 +660,9 @@ def audio_transcription(video_url):
     output_path = None
     created_temp_files = []
     try:
-        # 使用 yt-dlp 下載音頻
+        # 使用 yt-dlp 下載音頻（多國語言音軌優先選用繁體中文）
         ydl_opts = {
-            'format': 'bestaudio[protocol^=http]/best',
+            'format': PREFERRED_AUDIO_FORMAT,
             'outtmpl': f'/tmp/{str(uuid.uuid4())}.%(ext)s',
             'ffmpeg_location': '/usr/bin/ffmpeg',
             'postprocessors': [{
@@ -1410,7 +1432,7 @@ def download_video_audio(url):
         raise ValueError("Unsafe or invalid URL provided.")
     temp_uuid = str(uuid.uuid4())
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': PREFERRED_AUDIO_FORMAT,
         'outtmpl': f'/tmp/{temp_uuid}.%(ext)s',
         'ffmpeg_location': '/usr/bin/ffmpeg',
         'postprocessors': [{
@@ -1498,7 +1520,7 @@ async def handle_yt2text(update, context):
 
 def get_video_title(video_url):
     """
-    使用 yt-dlp 提取影片標題，支援所有 yt-dlp 支援的網站
+    使用 yt-dlp 提取影片標題，支援所有 yt-dlp 支援的網站，並自動在地化翻譯非中文標題
     """
     try:
         ydl_opts = {
@@ -1513,7 +1535,8 @@ def get_video_title(video_url):
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
-            return info.get('title', '影片')
+            raw_title = info.get('title', '影片')
+            return localize_title(raw_title)
     except Exception as e:
         print(f"Error extracting video title: {e}")
         return "影片"
@@ -1521,13 +1544,13 @@ def get_video_title(video_url):
 def get_web_title(user_input):
     """
     根據用戶提供的 URL，抓取網頁內容並提取標題。
-    支援所有 yt-dlp 支援的影片網站、Podcast 網站以及一般網頁
+    支援所有 yt-dlp 支援的影片網站、Podcast 網站以及一般網頁，並自動在地化翻譯非中文標題
     """
     # 檢查是否為 Pocket Casts URL (支援 pca.st 短網址與 pocketcasts.com)
     if is_pocketcasts_url(user_input):
         podcast_title = get_pocketcasts_title(user_input)
         if podcast_title:
-            return podcast_title
+            return localize_title(podcast_title)
 
     # 首先檢查是否為 yt-dlp 支援的影片網站
     if is_supported_by_ytdlp(user_input):
@@ -1542,8 +1565,8 @@ def get_web_title(user_input):
         
         # 使用 BeautifulSoup 解析網頁來提取標題
         soup = BeautifulSoup(downloaded, "lxml")
-        title = soup.title.string if soup.title else "無法提取標題"
-        return title
+        title = soup.title.string.strip() if soup.title and soup.title.string else "無法提取標題"
+        return localize_title(title)
     
     except Exception as e:
         print(f"Error occurred while fetching title: {e}")

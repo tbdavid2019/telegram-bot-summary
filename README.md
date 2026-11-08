@@ -224,6 +224,8 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 - **塔羅占卜 (`/tarot`)**：支援單張、三張牌、鑽石、月亮、馬蹄鐵、塞爾特十字牌陣，提供抽牌正逆位展示與 AI 深度解牌指引。
 - **月老姻緣與生肖合婚 (`/yiyu`)**：支援月老求籤解籤詩與出生年生肖契合度合婚測算。
 - **Whisper ASR 時間戳聽寫**：調用 GROQ Whisper API，預設輸出 `[MM:SS]` 精確時間軸標記，並以 `.txt` 檔案直接下載。
+- **多國語言 YouTube 繁中音軌優先與字幕優先**：支援 YouTube 多音軌配音影片，智慧優先選取繁體中文（`zh-Hant`、`zh-TW`、`zh-HK`）及中文音軌進行語音聽寫 (`audio_transcription`) 與音訊下載 (`/yt2audio`)；字幕提取自動優先配對繁體中文字幕。
+- **外語影片與網頁標題 AI 繁體在地化翻譯**：遇到非中文標題（如西班牙語、英語、日語假名、韓語等影片或網頁），自動透過 LLM 在地化翻譯為流暢繁體中文，格式化呈現為 `{繁中標題} ({原始外語標題})`，同步套用於 Telegram 摘要、David888 Wiki 發布與郵件主旨。
 - **泛化影片支援**：支援 1000+ 影片網站，包括 YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch、Facebook、Instagram 等。
 - **Whisper 聽寫功能**：調用免費的 GROQ Whisper API，用於自動生成字幕。
 - **無字幕處理**：當影片無字幕時，可以啟用聽力辨識生成字幕。

@@ -355,3 +355,69 @@ def is_conversation_followup(text: str, history: dict | None) -> bool:
     if any(k in t for k in referring_words):
         return True
     return len(t) < 300
+
+
+def needs_title_localization(title: str, target_lang: str = "zh-TW") -> bool:
+    """Check whether a video/webpage title is in a foreign language and needs localization into Traditional Chinese."""
+    if not title or not isinstance(title, str):
+        return False
+    t = title.strip()
+    if len(t) < 2:
+        return False
+
+    # Common generic or system placeholder titles that should not be localized
+    generic_titles = {
+        "影片", "無法提取標題", "無法下載該網頁的內容。", "抓取過程中發生錯誤。",
+        "短文之摘要", "youtube", "twitter", "x", "facebook", "tiktok", "instagram"
+    }
+    if t.lower() in generic_titles:
+        return False
+
+    # If title contains Japanese Kana (Hiragana / Katakana) or Korean Hangul
+    has_japanese_kana = bool(re.search(r"[\u3040-\u309f\u30a0-\u30ff]", t))
+    has_korean = bool(re.search(r"[\uac00-\ud7af]", t))
+    # Standard CJK Unified Ideographs (Chinese characters)
+    has_chinese_chars = bool(re.search(r"[\u4e00-\u9fa5]", t))
+
+    if has_japanese_kana or has_korean:
+        return True
+    if not has_chinese_chars:
+        return True
+    return False
+
+
+def localize_title(title: str, target_lang: str = "zh-TW") -> str:
+    """
+    Localize foreign titles into fluent Traditional Chinese (zh-TW).
+    Preserves original title: e.g. "誰是史上最有錢的人？ (¿Quién ha sido el más RICO de la historia?)"
+    """
+    if not needs_title_localization(title, target_lang):
+        return title
+
+    clean_title = title.strip()
+    prompt = (
+        f"請將以下影片/文章標題翻譯為流暢自然的繁體中文（台灣）：\n"
+        f"「{clean_title}」\n\n"
+        f"規則：\n"
+        f"1. 直接輸出翻譯後的繁體中文標題。\n"
+        f"2. 不要加上引號、括號說明、前綴或任何多餘文字。\n"
+        f"3. 保持簡潔有力、符合中文語意習慣。"
+    )
+    try:
+        from app.services.llm import call_llm_with_fallback
+        translated = call_llm_with_fallback(prompt)
+        if translated:
+            translated = translated.strip().strip('"\'“”「」')
+            # Verify translation did not fail or return generic error
+            if (
+                translated
+                and not translated.startswith("Unknown error")
+                and not translated.startswith("❌")
+                and translated != clean_title
+            ):
+                return f"{translated} ({clean_title})"
+    except Exception as e:
+        print(f"[WARN] Failed to localize title '{clean_title}': {e}")
+
+    return title
+

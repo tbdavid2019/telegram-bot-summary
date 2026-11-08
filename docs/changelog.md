@@ -1,5 +1,28 @@
 # Changelog
 
+## [2026-11-08] - YouTube Multi-Language Audio Track Selection, Subtitle Priority & AI Title Localization
+
+### ✨ Added
+- **🌐 多國語言 YouTube 影片繁中音軌優先選擇 (`app/legacy.py`, `main.py`)**:
+  - 針對 YouTube 多國語言配音影片（如跨國頻道多音軌支援），重構 yt-dlp 格式選擇器：
+    `bestaudio[language=zh-Hant]/bestaudio[language=zh-TW]/bestaudio[language=zh-HK]/bestaudio[language=zh]/bestaudio[language=zh-Hans]/bestaudio[language=zh-CN]/bestaudio[language=en]/bestaudio[protocol^=http]/bestaudio/best`
+  - 自動依序優先下載繁體中文 (`zh-Hant`, `zh-TW`, `zh-HK`)、中文 (`zh`, `zh-Hans`, `zh-CN`)、英文 (`en`) 音軌，徹底解決過往預設抓取原始外語音軌（如西班牙語、法語）導致 Whisper 語音轉文字與摘要語言錯亂的問題。
+  - 同步套用於語音聽寫 (`audio_transcription`) 與音訊下載指令 (`/yt2audio`)。
+
+- **🎯 中文字幕選取優先級重構 (`extract_video_transcript`)**:
+  - 原先字幕語言順序將 `en` 置於首位，導致包含雙語字幕之影片預設抓取英文字幕。
+  - 重構優先順序為 `['zh-Hant', 'zh-TW', 'zh-HK', 'zh-Hans', 'zh-CN', 'zh', 'en']`，繁體中文字幕最優先提取，並於下載後自動清理同影片之其餘語言暫存字幕檔，避免磁碟空間浪費。
+
+- **🏷️ 外語影片與網頁標題 AI 繁體在地化翻譯 (`app/services/content.py`)**:
+  - 新增 `needs_title_localization(title)` 與 `localize_title(title)` 服務模組。
+  - 智慧偵測標題語言特徵：若非中文標題（如西班牙文、英文、日文假名、韓文等），自動調用 LLM 進行自然流暢的繁體中文（台灣）在地化翻譯。
+  - 標題自動呈現格式為：`{繁中在地化標題} ({原始外語標題})`（例如：`誰是史上最有錢的人？ (¿Quién ha sido el más RICO de la historia?)`）。
+  - 自動貫穿應用至 Telegram 摘要推播標題、David888 Wiki 知識庫發布頁面主標題與電子郵件主旨，徹底杜絕外語頻道發布至 David888 Wiki 時出現生硬外文標題的問題。
+  - 已具備中文字元之標題與系統通用標題直接略過，零 Token 消耗、零延遲。
+
+- **🧪 單元測試覆蓋 (`tests/test_content.py`)**:
+  - 新增外語標題在地化偵測、中文標題快速略過、外文標題繁中翻譯格式化及 LLM 異常降級回退等完整測試用例。
+
 ## [2026-11-08] - Magpie Gateway Integration with Automatic Multi-Tier Fallback
 
 ### ✨ Added

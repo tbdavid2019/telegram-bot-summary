@@ -11,6 +11,8 @@ from app.services.content import (
     detect_file_type,
     convert_document_to_markdown,
     transcribe_local_audio,
+    needs_title_localization,
+    localize_title,
 )
 
 
@@ -187,6 +189,47 @@ class TestContentHelpers(unittest.TestCase):
             transcript = transcribe_local_audio("/tmp/fake_audio.mp3")
             self.assertIn("[00:00] 這是本地音訊轉錄測試", transcript)
 
+    def test_needs_title_localization(self):
+        # Spanish title from YouTube test case
+        self.assertTrue(needs_title_localization("¿Quién ha sido el más RICO de la historia?"))
+        # English titles
+        self.assertTrue(needs_title_localization("How to build an AI agent in 2026"))
+        self.assertTrue(needs_title_localization("OpenAI vs Google DeepMind"))
+        # Japanese title with Hiragana/Katakana
+        self.assertTrue(needs_title_localization("【最新】日本の経済危機について"))
+        self.assertTrue(needs_title_localization("プログラミング入門"))
+        # Korean title
+        self.assertTrue(needs_title_localization("인공지능의 미래"))
+        # Already in Traditional or Simplified Chinese
+        self.assertFalse(needs_title_localization("【老高與小茉】五大歷史謎團"))
+        self.assertFalse(needs_title_localization("台灣人工智慧發展趨勢分析"))
+        # Generic or empty titles
+        self.assertFalse(needs_title_localization("影片"))
+        self.assertFalse(needs_title_localization("無法提取標題"))
+        self.assertFalse(needs_title_localization("無法下載該網頁的內容。"))
+        self.assertFalse(needs_title_localization(""))
+        self.assertFalse(needs_title_localization("YouTube"))
+
+    def test_localize_title_chinese_skipped(self):
+        title = "【老高與小茉】五大歷史謎團"
+        # Should return as-is immediately without LLM call
+        self.assertEqual(localize_title(title), title)
+
+    def test_localize_title_foreign_success(self):
+        from unittest.mock import patch
+        foreign_title = "¿Quién ha sido el más RICO de la historia?"
+        with patch("app.services.llm.call_llm_with_fallback", return_value="歷史上誰最富有？"):
+            result = localize_title(foreign_title)
+            self.assertEqual(result, "歷史上誰最富有？ (¿Quién ha sido el más RICO de la historia?)")
+
+    def test_localize_title_llm_failure_graceful_fallback(self):
+        from unittest.mock import patch
+        foreign_title = "The History of Rome"
+        with patch("app.services.llm.call_llm_with_fallback", side_effect=Exception("API Error")):
+            result = localize_title(foreign_title)
+            self.assertEqual(result, foreign_title)
+
 
 if __name__ == "__main__":
     unittest.main()
+
