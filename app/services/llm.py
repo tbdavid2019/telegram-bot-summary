@@ -53,7 +53,8 @@ def _split_keys(key_string: Optional[str]) -> List[str]:
 def get_configured_endpoints() -> List[LLMEndpoint]:
     """
     Discover all configured LLM endpoints and key pools from environment variables in priority order:
-    1. Primary Tier (LLM_API_KEY / LLM1_API_KEY / OPENAI_API_KEY) - handles multi-key lists.
+    0. Magpie Gateway (MAGPIE_API_KEY / MAGPIE_BASE_URL / MAGPIE_MODEL) - prioritized as Tier 0 (Primary) if set.
+    1. Primary Tier (LLM_API_KEY / LLM1_API_KEY / OPENAI_API_KEY) - handles multi-key lists (serves as fallback if Magpie is set).
     2. Multi-Tier Fallbacks (LLM2..LLM20) - handles multi-key lists per tier.
     3. JSON Structured Fallback Pool (LLM_FALLBACK_CONFIGS).
     4. Model-level Fallbacks on Primary (LLM_FALLBACK_MODELS).
@@ -62,21 +63,41 @@ def get_configured_endpoints() -> List[LLMEndpoint]:
     timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))
     endpoints: List[LLMEndpoint] = []
 
-    # 1. Primary LLM (Tier 1)
+    # 0. Magpie Gateway (Tier 0 / Primary when configured)
+    magpie_raw_keys = os.environ.get("MAGPIE_API_KEY", "").strip()
+    magpie_keys = _split_keys(magpie_raw_keys)
+    if magpie_keys:
+        magpie_model = (os.environ.get("MAGPIE_MODEL") or "auto/gemini-3.8-flash").strip()
+        magpie_base_url = (os.environ.get("MAGPIE_BASE_URL") or "http://60.248.142.126:3425/v1").strip()
+        for idx, key in enumerate(magpie_keys):
+            tag = f"Magpie (Primary Key #{idx+1})" if len(magpie_keys) > 1 else "Magpie (Primary)"
+            endpoints.append(LLMEndpoint(
+                name=tag,
+                model=magpie_model,
+                base_url=magpie_base_url,
+                api_key=key,
+                timeout=timeout,
+            ))
+
+    # 1. Primary LLM (Tier 1) / Fallback if Magpie is set
     primary_raw_keys = os.environ.get("LLM_API_KEY") or os.environ.get("LLM1_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     primary_keys = _split_keys(primary_raw_keys)
     primary_model = (os.environ.get("LLM_MODEL") or os.environ.get("LLM1_MODEL") or "gpt-4o-mini").strip()
     primary_base_url = (os.environ.get("LLM_BASE_URL") or os.environ.get("LLM1_BASE_URL") or "https://api.openai.com/v1").strip()
 
     for idx, key in enumerate(primary_keys):
-        tag = f"LLM1 (Primary Key #{idx+1})" if len(primary_keys) > 1 else "LLM1 (Primary)"
-        endpoints.append(LLMEndpoint(
-            name=tag,
-            model=primary_model,
-            base_url=primary_base_url,
-            api_key=key,
-            timeout=timeout,
-        ))
+        if not any(ep.api_key == key and ep.clean_base_url == primary_base_url.rstrip("/") for ep in endpoints):
+            if magpie_keys:
+                tag = f"LLM1 (Fallback Key #{idx+1})" if len(primary_keys) > 1 else "LLM1 (Fallback)"
+            else:
+                tag = f"LLM1 (Primary Key #{idx+1})" if len(primary_keys) > 1 else "LLM1 (Primary)"
+            endpoints.append(LLMEndpoint(
+                name=tag,
+                model=primary_model,
+                base_url=primary_base_url,
+                api_key=key,
+                timeout=timeout,
+            ))
 
     # 2. Multi-Tier Fallbacks (LLM2..LLM20)
     for tier in range(2, 21):
@@ -215,6 +236,10 @@ def _execute_chat_completion(
 
     if "generativelanguage.googleapis.com" in api_base_url:
         for alias in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"):
+            if alias not in models_to_try:
+                models_to_try.append(alias)
+    elif ":3425" in api_base_url or "magpie" in api_base_url.lower():
+        for alias in ("auto/gemini-3.8-flash", "group/agy-first", "auto/gemini-3.5-flash-lite", "antigravity/gemini-3.8-flash"):
             if alias not in models_to_try:
                 models_to_try.append(alias)
     elif "api.groq.com" in api_base_url:

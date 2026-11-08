@@ -456,11 +456,14 @@ docker run -d \
 
 | Environment Variable | Description |
 |-----------------------|-------------|
-| `LLM_API_KEY` / `OPENAI_API_KEY` | 主要 LLM API 金鑰 |
+| `MAGPIE_API_KEY` | 自建 Magpie Gateway API 金鑰 (若設置自動作為 Tier 0 主要推論模型) |
+| `MAGPIE_MODEL` | Magpie Gateway 模型名稱 (預設: `auto/gemini-3.8-flash`) |
+| `MAGPIE_BASE_URL` | Magpie Gateway 基礎 URL (預設: `http://60.248.142.126:3425/v1`) |
+| `LLM_API_KEY` / `OPENAI_API_KEY` | 主要 LLM API 金鑰 (當 MAGPIE 啟用時自動作為備援 Tier 1) |
 | `LLM_MODEL` | 主要 LLM 模型名稱 (預設: `gpt-4o-mini`) |
 | `LLM_BASE_URL` | 主要 LLM API 基礎 URL (預設: `https://api.openai.com/v1`) |
 | `LLM2_API_KEY` / `LLM2_MODEL` / `LLM2_BASE_URL` | 備用 LLM 2 設定 (支援自動容錯降級) |
-| `LLM3_API_KEY` / `LLM3_MODEL` / `LLM3_BASE_URL` | 備用 LLM 3 設定 (支援多級容錯，可擴展至 LLM10) |
+| `LLM3_API_KEY` ~ `LLM20_API_KEY` | 備用 LLM 多級容錯設定 (可自由擴展至 LLM20) |
 | `LLM_FALLBACK_MODELS` | 同節點備用模型列表 (逗號分隔) |
 | `GROQ_API_KEY` | GROQ API 金鑰 (用於 Whisper 語音轉文字與自動 Groq LLM 降級) |
 | `GROQ_FALLBACK_MODEL` | GROQ 自動備援模型名稱 (預設: `openai/gpt-oss-120b`，具備 413 Payload 自動截取保護) |

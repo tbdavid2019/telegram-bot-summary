@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-11-08] - Magpie Gateway Integration with Automatic Multi-Tier Fallback
+
+### ✨ Added
+- **🦜 支援自建 Magpie Gateway 作為優先主要推論端點 (`app/services/llm.py`)**:
+  - 新增環境變數 `MAGPIE_API_KEY`、`MAGPIE_BASE_URL` 與 `MAGPIE_MODEL` 第一類原生支援。
+  - 當設定 `MAGPIE_API_KEY` 時，系統自動將 Magpie 端點掛載為 **Tier 0 (主要推論引擎)**，預設模型為 `auto/gemini-3.8-flash`（支援深度思考推理與高品質結構化繁中輸出）。
+  - **平滑備援機制 (Automated Multi-Tier Fallback)**：
+    - 原先配置的 `LLM_API_KEY`（如 Google Gemini 原廠 API）與 `LLM2_API_KEY`（如 Groq Llama/GPT-OSS）自動無縫轉為 Tier 1、Tier 2 降級備援候選池。
+    - 當 Magpie Gateway 遭遇網路逾時、配額滿載或伺服器異常時，自動透明切換至原廠備援模型，保證 Telegram Bot 服務 100% 不中斷。
+  - **Magpie 內部同節點模型容錯 (Intra-Provider Alias Retry)**：
+    - 在調用 Magpie 遭遇 400/404/413 錯誤時，自動在 Magpie 節點內部循序重試備用模型（`auto/gemini-3.8-flash` $\rightarrow$ `group/agy-first` $\rightarrow$ `auto/gemini-3.5-flash-lite` $\rightarrow$ `antigravity/gemini-3.8-flash`），最大化推論成功率。
+- **🧪 完整單元測試覆蓋 (`tests/test_llm.py`)**:
+  - 新增 Magpie 主要端點自動偵測、Magpie 異常平滑切換至備援 LLM、Magpie 同節點模型別名重試測試，全數通過。
+
 ## [2026-10-29] - Restore Automated CD Pipeline & Deploy Dedicated Scoped Watchtower
 
 ### 🔧 Fixed & Improved
