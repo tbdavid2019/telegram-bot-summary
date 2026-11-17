@@ -8,7 +8,6 @@ import re
 import trafilatura
 import uuid
 import requests
-from openai import OpenAI
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters, ApplicationBuilder
 from bs4 import BeautifulSoup

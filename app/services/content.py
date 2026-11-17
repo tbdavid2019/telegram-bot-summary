@@ -249,6 +249,9 @@ def convert_document_to_markdown(file_path: str) -> str:
     try:
         return anydoc.to_markdown(resolved_path)
     except Exception as e:
+        needs_ocr_cls = getattr(anydoc, "NeedsOcrError", None)
+        if needs_ocr_cls is not None and isinstance(e, needs_ocr_cls):
+            raise ValueError("此 PDF 為掃描影像檔（無內嵌文字層），目前無法直接提取文字。") from e
         print(f"[DEBUG] anydoc.to_markdown failed ({e}), falling back to direct text read")
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()

@@ -13,7 +13,10 @@ log() {
 normalize_version() {
     python3 - "$1" <<'PY'
 import sys
-from pkg_resources import parse_version
+try:
+    from packaging.version import Version as parse_version
+except ImportError:
+    from pkg_resources import parse_version
 print(parse_version(sys.argv[1]))
 PY
 }
@@ -22,7 +25,10 @@ latest_pypi_prerelease() {
     python3 <<'PY'
 import json
 import urllib.request
-from pkg_resources import parse_version
+try:
+    from packaging.version import Version as parse_version
+except ImportError:
+    from pkg_resources import parse_version
 with urllib.request.urlopen("https://pypi.org/pypi/yt-dlp/json", timeout=20) as r:
     data = json.load(r)
 versions = [v for v, files in data.get("releases", {}).items() if files]

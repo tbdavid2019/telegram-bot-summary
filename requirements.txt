@@ -1,23 +1,15 @@
-# async handler
-asyncio==3.4.3
-
-openai
-litellm
-
-# text extraction
-trafilatura==1.9.0 
+# Web extraction & HTTP
+trafilatura>=2.3.1
+requests>=2.34.2
 
 # PDFs & Office Documents (AnyDoc by Firecrawl)
-firecrawl-anydoc
+firecrawl-anydoc>=0.2.4
 
 # AI File Type Detection (Google Magika)
 magika>=1.0.3
 
 # Telegram
-python-telegram-bot==21.1.1
-
-# YouTube
-youtube_transcript_api==0.6.2
+python-telegram-bot>=22.8
 
 # yt-dlp for downloading YouTube audio
 yt-dlp
@@ -33,5 +25,6 @@ pymongo
 feedparser
 markdown>=3.8.1
 fastapi
+pydantic
 uvicorn
 

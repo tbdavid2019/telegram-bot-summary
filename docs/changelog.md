@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-11-17] - Upstream Dependency Upgrades & Cleanup
+
+### 🔄 Changed & Improved
+- **📦 升級並精簡核心上游套件 (`requirements.txt`)**:
+  - 升級 `python-telegram-bot` (`21.1.1` $\rightarrow$ `>=22.8`)，支援最新 Telegram Bot API 10.0 與現代非同步特性。
+  - 升級 `trafilatura` (`1.9.0` $\rightarrow$ `>=2.3.1`)，取得最新網頁正文提取修正與改進。
+  - 升級 `firecrawl-anydoc` 最低版本需求為 `>=0.2.4`，並於 `app/services/content.py` 的 `convert_document_to_markdown` 明確捕捉 `NeedsOcrError`，對純掃描影像 PDF 回傳友善提示（避免誤將二進位 PDF 內容送入摘要流程）。
+  - 明確補列直接依賴 `requests>=2.34.2` 與 `pydantic`。
+  - 移除過時或未於主程式使用的套件：`asyncio==3.4.3`（Python 3.4+ 已內建標準庫）、`youtube_transcript_api==0.6.2`、`litellm` 與 `openai`（並同步移除 `app/legacy.py`、`main.py` 未使用的 `from openai import OpenAI` 匯入），縮減 Docker 映像體積與建置時間。
+- **🐳 更新建置與自動化更新腳本 (`Dockerfile`, `auto_update_ytdlp.sh`)**:
+  - `Dockerfile` 改用官方現行 Deno 安裝腳本網址 (`https://deno.land/install.sh`)。
+  - `auto_update_ytdlp.sh` 改用 `packaging.version.Version`（並保留 `pkg_resources` 回退相容），避免新版 `setuptools` 移除 `pkg_resources` 導致版本比對失敗。
+- **🧪 補充單元測試 (`tests/test_content.py`)**:
+  - 新增 `test_convert_document_to_markdown_needs_ocr_pdf` 驗證掃描影像 PDF 的 `NeedsOcrError` 友善錯誤處理。
+
 ## [2026-11-08] - YouTube Multi-Language Audio Track Selection, Subtitle Priority & AI Title Localization
 
 ### ✨ Added

@@ -220,7 +220,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 - **David888 Wiki 知識庫發布（LLM 深度報告好讀版）**：整合 `https://wiki.david888.com/api`，當使用者交代 LLM 撰寫長篇分析報告時，LLM 會自動將完整 Markdown 發布至 David888 Wiki，並回傳排版優美的公開閱讀連結（`shareUrl`）與 Reveal 2D 簡報模式（`presentUrl`）；亦可透過 `/wiki` 手動一鍵發布或 `/wikiread` 遠端讀取。
 - **自然 AI 對話與智慧意圖分流**：日常打字（問候、編程諮詢、問題解答、隨意聊天）會以自然流暢的 AI 助理模式對話，並保留最近對話上下文；只有發送 URL、上傳文件或明確要求總結時，才會啟動結構化摘要。
 - **888box 雲端資產儲存庫**：整合 888box（主要節點：`https://box.david888.com`，自動備援節點：`https://box.glsoft.ai`、`https://box.aiurl.tw`），提供 `/box <URL> [標題]` 遠端轉存各類影片、音訊、文件、圖片，自動產出 CloudFront 高速 CDN 下載直鏈與 Web 分享頁面，並可用 `/boxstats` 即時查看儲存統計。
-- **AnyDoc 高效能文件解析**：採用 Firecrawl Rust 引擎 `firecrawl-anydoc`（取代 MarkItDown），支援 PDF、Word (DOCX)、Excel (XLSX)、PowerPoint (PPTX)、EPUB、RTF、CSV 等文件極速轉為 Markdown 進行摘要。
+- **AnyDoc 高效能文件解析**：採用 Firecrawl Rust 引擎 `firecrawl-anydoc>=0.2.4`（取代 MarkItDown），支援 PDF、Word (DOCX)、Excel (XLSX)、PowerPoint (PPTX)、EPUB、RTF、CSV 等文件極速轉為 Markdown 進行摘要，並可辨識無內嵌文字層的掃描影像 PDF（`NeedsOcrError`）給予友善提示。
 - **塔羅占卜 (`/tarot`)**：支援單張、三張牌、鑽石、月亮、馬蹄鐵、塞爾特十字牌陣，提供抽牌正逆位展示與 AI 深度解牌指引。
 - **月老姻緣與生肖合婚 (`/yiyu`)**：支援月老求籤解籤詩與出生年生肖契合度合婚測算。
 - **Whisper ASR 時間戳聽寫**：調用 GROQ Whisper API，預設輸出 `[MM:SS]` 精確時間軸標記，並以 `.txt` 檔案直接下載。
@@ -342,8 +342,9 @@ chmod +x setup_chrome_container.sh
 - **Dual Container Registries (Docker Hub & GHCR)**：支援 Docker Hub (`tbdavid2019/telegram-bot-summary:latest`) 與 GitHub Container Registry (`ghcr.io/tbdavid2019/telegram-bot-summary:latest`) 雙來源自動建置與發布，免除對單一鏡像來源的依賴，大幅降低 Docker Hub 匿名限流風險。
 - **Multi-Tier Fallback LLM Engine**：支援多級 LLM 容錯降級機制 (`LLM1` -> `LLM2` -> `LLM3` -> `Groq Fallback`)，當主要模型遭遇 HTTP 400、429 超流、500/503 或網路逾時，秒級自動切換備用端點，並自動修復 Google Gemini OpenAI 格式相容性。
 - **Supports text**：處理純文本。
-- **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura`）。
-- **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`，全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
+- **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura>=2.3.1`）。
+- **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`（`firecrawl-anydoc>=0.2.4`），全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
+- **Modern Telegram Bot Engine**：基於 `python-telegram-bot>=22.8`（Python 3.12+），全面支援最新 Telegram Bot API 與非同步互動體驗。
 - **Supports 1000+ Video Websites**：處理來自 YouTube、Vimeo、Bilibili、TikTok、Twitch 等 1000+ 影片網站的字幕及聽寫。
 - **Whisper API**：自動轉錄無字幕的影片與音訊，預設附帶精確時間戳 (`[MM:SS]`) 標註。
 - **Divination & Astrology**：內建塔羅牌占卜 (`/tarot`)、月老姻緣籤與生肖合婚 (`/yiyu`)。

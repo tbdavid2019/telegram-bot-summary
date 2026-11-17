@@ -229,6 +229,31 @@ class TestContentHelpers(unittest.TestCase):
             result = localize_title(foreign_title)
             self.assertEqual(result, foreign_title)
 
+    def test_convert_document_to_markdown_needs_ocr_pdf(self):
+        import types
+        from unittest.mock import patch
+
+        class FakeNeedsOcrError(Exception):
+            pass
+
+        fake_anydoc = types.SimpleNamespace(
+            NeedsOcrError=FakeNeedsOcrError,
+            to_markdown=lambda _path: (_ for _ in ()).throw(FakeNeedsOcrError("pages 1-2 need OCR")),
+        )
+        fake_info = {
+            "group": "document",
+            "label": "pdf",
+            "description": "PDF document",
+            "is_text": False,
+            "extensions": ["pdf"],
+            "mime_type": "application/pdf",
+        }
+        with patch("app.services.content.detect_file_type", return_value=fake_info), \
+             patch.dict("sys.modules", {"anydoc": fake_anydoc}):
+            with self.assertRaises(ValueError) as ctx:
+                convert_document_to_markdown("scanned.pdf")
+            self.assertIn("掃描影像檔", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

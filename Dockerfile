@@ -8,8 +8,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Deno
-# Install Deno
-RUN curl -fsSL https://deno.land/x/install/install.sh | sh && \
+RUN curl -fsSL https://deno.land/install.sh | sh && \
     mv /root/.deno/bin/deno /usr/local/bin/deno && \
     chmod +x /usr/local/bin/deno
 
