@@ -360,6 +360,117 @@ def is_conversation_followup(text: str, history: dict | None) -> bool:
     return len(t) < 300
 
 
+_INVALID_RAW_TITLES = {
+    "影片",
+    "無法提取標題",
+    "無法下載該網頁的內容。",
+    "抓取過程中發生錯誤。",
+    "短文之摘要",
+    "text summary",
+    "youtube",
+    "twitter",
+    "x",
+    "facebook",
+    "tiktok",
+    "instagram",
+}
+
+_SUMMARY_BOT_TAGLINE = "✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
+
+_TITLE_LINE_PATTERN = re.compile(
+    r"^(?:#{1,6}\s*)?(?:[*_]{1,2}\s*)?(?:seo\s*標題|標題|title)(?:\s*[*_]{1,2})?\s*[:：]\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def sanitize_raw_title(title: str | None, max_length: int = 200) -> str:
+    """Remove control characters, collapse newlines/whitespace, and truncate to max_length."""
+    if not title or not isinstance(title, str):
+        return ""
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", title)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if max_length > 0 and len(cleaned) > max_length:
+        cleaned = cleaned[:max_length].rstrip()
+    return cleaned
+
+
+def is_summary_error_message(text: str | None) -> bool:
+    """Return True if text is empty or represents a known summary generation error message."""
+    if not text or not isinstance(text, str):
+        return True
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return stripped.startswith("⚠️ 摘要生成失敗") or stripped.startswith("Unknown error!")
+
+
+def _split_markdown_safely(text: str, limit: int = 3200) -> list[str]:
+    """Split Markdown text into chunks <= limit along paragraph, newline, sentence, or space boundaries."""
+    if not text or not isinstance(text, str):
+        return []
+    if limit <= 0:
+        return [text]
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            if remaining.strip():
+                chunks.append(remaining)
+            break
+
+        window = remaining[:limit]
+        split_at = -1
+        advance_from = -1
+
+        # 1. Paragraph boundary (\n\n)
+        pos = window.rfind("\n\n")
+        if pos > 0:
+            split_at = pos
+            advance_from = pos + 2
+
+        # 2. Line boundary (\n)
+        if split_at <= 0:
+            pos = window.rfind("\n")
+            if pos > 0:
+                split_at = pos
+                advance_from = pos + 1
+
+        # 3. Sentence punctuation or space boundary
+        if split_at <= 0:
+            best_punct = -1
+            for punct in ("。", "！", "？", ". ", "! ", "? "):
+                p_idx = window.rfind(punct)
+                if p_idx > best_punct:
+                    best_punct = p_idx
+                    split_at = p_idx + 1
+                    advance_from = p_idx + len(punct)
+            if split_at <= 0:
+                for ws in (" ", "\t"):
+                    w_idx = window.rfind(ws)
+                    if w_idx > split_at:
+                        split_at = w_idx
+                        advance_from = w_idx + 1
+
+        # 4. Hard split fallback
+        if split_at <= 0:
+            split_at = limit
+            advance_from = limit
+
+        chunk = remaining[:split_at].rstrip("\n")
+        if chunk:
+            chunks.append(chunk)
+        next_remaining = remaining[advance_from:].lstrip("\n")
+        if len(next_remaining) >= len(remaining):
+            # Guarantee forward progress even on edge-case leading newlines
+            next_remaining = remaining[limit:]
+        remaining = next_remaining
+
+    return chunks
+
+
 def needs_title_localization(title: str, target_lang: str = "zh-TW") -> bool:
     """Check whether a video/webpage title is in a foreign language and needs localization into Traditional Chinese."""
     if not title or not isinstance(title, str):
@@ -368,12 +479,7 @@ def needs_title_localization(title: str, target_lang: str = "zh-TW") -> bool:
     if len(t) < 2:
         return False
 
-    # Common generic or system placeholder titles that should not be localized
-    generic_titles = {
-        "影片", "無法提取標題", "無法下載該網頁的內容。", "抓取過程中發生錯誤。",
-        "短文之摘要", "youtube", "twitter", "x", "facebook", "tiktok", "instagram"
-    }
-    if t.lower() in generic_titles:
+    if t.lower() in _INVALID_RAW_TITLES:
         return False
 
     # If title contains Japanese Kana (Hiragana / Katakana) or Korean Hangul
@@ -423,4 +529,143 @@ def localize_title(title: str, target_lang: str = "zh-TW") -> str:
         print(f"[WARN] Failed to localize title '{clean_title}': {e}")
 
     return title
+
+
+def is_valid_raw_title(title: str | None) -> bool:
+    """Return True if raw title is a meaningful non-placeholder title string."""
+    cleaned = sanitize_raw_title(title, max_length=0)
+    if len(cleaned) < 2 or len(cleaned) > 300:
+        return False
+    return cleaned.lower() not in _INVALID_RAW_TITLES
+
+
+def _clean_extracted_title(raw_title: str) -> str:
+    """Strip surrounding quotes, paired markdown emphasis markers, and leading pins/hashes from a title."""
+    clean = raw_title.strip()
+    prev = None
+    while clean != prev:
+        prev = clean
+        clean = clean.strip()
+        clean = re.sub(r"\*\*(.*?)\*\*", r"\1", clean)
+        clean = re.sub(r"__(.*?)__", r"\1", clean)
+        if len(clean) >= 2 and clean.startswith("*") and clean.endswith("*"):
+            clean = clean[1:-1]
+        clean = clean.replace("**", "")
+        clean = clean.strip("\"'“”「」《》")
+        clean = re.sub(r"^(?:📌|#)+\s*", "", clean)
+        clean = clean.strip()
+    return clean
+
+
+def extract_title_from_summary(summary_text: str) -> tuple[str | None, str]:
+    """Extract a leading TITLE line (strictly the first non-empty line) and return (clean_title, cleaned_body)."""
+    if not summary_text or not isinstance(summary_text, str):
+        return None, summary_text
+
+    lines = summary_text.splitlines()
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        match = _TITLE_LINE_PATTERN.match(stripped)
+        if not match:
+            return None, summary_text
+
+        rest_idx = idx + 1
+        while rest_idx < len(lines) and not lines[rest_idx].strip():
+            rest_idx += 1
+        if rest_idx < len(lines) and re.match(r"^-{3,}$", lines[rest_idx].strip()):
+            rest_idx += 1
+            while rest_idx < len(lines) and not lines[rest_idx].strip():
+                rest_idx += 1
+
+        cleaned_body = "\n".join(lines[rest_idx:]).lstrip()
+        if not cleaned_body.strip():
+            return None, summary_text
+
+        clean_title = _clean_extracted_title(match.group(1))
+        if (
+            not clean_title
+            or len(clean_title) < 2
+            or len(clean_title) > 120
+            or clean_title.startswith("⚠️")
+            or clean_title.startswith("❌")
+            or clean_title.lower().startswith("unknown error")
+        ):
+            return None, cleaned_body
+
+        return clean_title, cleaned_body
+
+    return None, summary_text
+
+
+def resolve_final_title(
+    ai_title: str | None,
+    raw_title: str | None,
+    language: str = "zh-TW",
+    default_title: str = "短文之摘要",
+) -> str:
+    """Resolve final display title consistently: AI SEO title -> valid sanitized raw title -> default_title."""
+    clean_ai = sanitize_raw_title(ai_title)
+    if clean_ai:
+        return clean_ai
+    if is_valid_raw_title(raw_title):
+        return sanitize_raw_title(raw_title)
+    return default_title
+
+
+def compose_summary_with_source(
+    title: str,
+    summary: str,
+    original_url: str | None = None,
+    raw_title: str | None = None,
+) -> str:
+    """Format the final summary message with sanitized SEO title and optional raw title / source URL footer."""
+    clean_title = sanitize_raw_title(title)
+    clean_raw_title = sanitize_raw_title(raw_title)
+    show_raw_title = is_valid_raw_title(clean_raw_title) and clean_raw_title != clean_title
+
+    parts = [f"📌 {clean_title}\n\n{summary}"]
+    footer_lines = []
+    if show_raw_title:
+        footer_lines.append(f"🏷️ 原始標題：{clean_raw_title}")
+    if original_url:
+        footer_lines.append(f"▶ {original_url}")
+
+    if footer_lines:
+        parts.append("\n".join(footer_lines))
+    return "\n\n".join(parts)
+
+
+def prepare_wiki_content(
+    title: str,
+    summary: str,
+    original_url: str | None = None,
+    raw_title: str | None = None,
+) -> str:
+    """Build Wiki Markdown starting with a unique H1 title, demoting body H1s, and appending source metadata."""
+    clean_title = sanitize_raw_title(title) or "AI 內容深度解析"
+    body = (summary or "").strip()
+    if body.endswith(_SUMMARY_BOT_TAGLINE):
+        body = body[: -len(_SUMMARY_BOT_TAGLINE)].rstrip()
+
+    if body:
+        body = re.sub(r"(?m)^#\s+", "## ", body)
+
+    sections = [f"# {clean_title}"]
+    if body:
+        sections.append(body)
+
+    clean_raw_title = sanitize_raw_title(raw_title)
+    show_raw = is_valid_raw_title(clean_raw_title) and clean_raw_title != clean_title
+    footer_lines = []
+    if show_raw:
+        footer_lines.append(f"🏷️ 原始標題：{clean_raw_title}")
+    if original_url and original_url not in ("text input", "uploaded file"):
+        footer_lines.append(f"▶ 原始連結：{original_url}")
+    if footer_lines:
+        sections.append("---\n\n" + "\n".join(footer_lines))
+
+    return "\n\n".join(sections)
 

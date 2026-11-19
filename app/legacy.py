@@ -11,7 +11,6 @@ import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, MessageHandler, CallbackQueryHandler, filters, ApplicationBuilder
 from bs4 import BeautifulSoup
-from telegram.helpers import escape_markdown
 from pymongo import MongoClient
 from datetime import datetime
 import feedparser
@@ -34,6 +33,18 @@ from app.services.content import (
     transcribe_local_audio,
     needs_title_localization,
     localize_title,
+    sanitize_raw_title,
+    is_valid_raw_title,
+    is_summary_error_message,
+    _split_markdown_safely,
+    extract_title_from_summary,
+    resolve_final_title,
+    compose_summary_with_source,
+    prepare_wiki_content,
+)
+from app.services.telegram_delivery import (
+    format_for_telegram,
+    send_telegram_formatted,
 )
 from app.services.divination import (
     parse_tarot_command,
@@ -71,6 +82,8 @@ from app.services.quick_reply import (
     detect_quick_reply_intent,
     build_transform_prompt,
     build_concept_image_url,
+    build_quick_reply_source,
+    clean_social_post_output,
 )
 from app.services.llm import (
     call_llm_with_fallback,
@@ -177,7 +190,8 @@ def send_summary_via_email(summary, recipient_email, subject="摘要結果"):
         else:
             all_recipients = [recipient_email]
             
-        message["Subject"] = subject
+        safe_subject = sanitize_raw_title(subject, max_length=200) or "摘要結果"
+        message["Subject"] = safe_subject
 
         # 添加郵件正文 (轉為 HTML 以支援 Markdown 排版)
         html_summary = markdown.markdown(summary, extensions=['nl2br'])
@@ -257,6 +271,14 @@ SUPPORTED_LANGUAGES = {
 
 # 繁體中文 System Prompt
 SYSTEM_PROMPT_ZH = (
+    "**第一步（必須在回覆的最第一行輸出 SEO 吸睛標題）**：\n"
+    "請先綜合整篇內容與原始標題，撰寫一個「專業知識＋好奇心反差」風格的部落格 SEO 標題，並嚴格使用以下格式置於回覆的**最第一行**：\n"
+    "TITLE: 你的標題\n\n"
+    "標題規則：\n"
+    "- 風格：結合專業深度與好奇心反差（例如：輝達差點沒有黃仁勳？揭開 33 年 AI 帝國背後的董事會內幕），讓人想點擊但不流於低俗農場驚嘆號。\n"
+    "- 語言：無論原始標題是簡體中文、英文、日韓文或其他語言，**一律改寫為自然道地的台灣繁體中文與台灣慣用語**（例如：英伟达→輝達、视频→影片、软件→軟體、大模型→大型語言模型）。\n"
+    "- SEO 與長度：控制在 22～34 個中文字內，融入核心搜尋關鍵字；**完全取代原標題**，去除網站後綴雜訊（如 `- YouTube`、`| 某某網`），**切勿**在標題後加上外文原標題括號。\n"
+    "- 格式：第一行只放 `TITLE: 標題`，不要加引號、`📌` 或 `#`，緊接著換行開始正文結構。\n\n"
     "請將以下原始內容總結為結構化報告，**請使用 Markdown 語法進行豐富的排版（例如：# 標題、**粗體**、- 清單等）**，整體語言使用繁體中文，結構需清楚、有條理。各部分之間請用分隔線區隔。\n\n"
     "**重要提醒**：內容中可能包含創作者的業配廣告或贊助商推廣（如 VPN、訂閱服務、App 推廣、折扣碼等），請自動識別並**略過這些廣告內容**，不要納入摘要中。只總結核心知識內容。\n\n"
     "### ⓵ 【容易懂 Easy Know】\n使用簡單易懂、生活化的語言，將內容**濃縮成一段約120～200字**的說明，**適合十二歲理解**。可使用生動比喻或生活情境幫助秒懂。\n\n"
@@ -270,6 +292,14 @@ SYSTEM_PROMPT_ZH = (
 
 # 英文 System Prompt
 SYSTEM_PROMPT_EN = (
+    "**Step 1 (Mandatory: Output an SEO-friendly engaging title on the VERY FIRST LINE)**:\n"
+    "First, synthesize the full content and original title into a compelling blog SEO title (50-70 chars, professional insight + curiosity gap, no site suffix) and place it on the **very first line** using this exact format:\n"
+    "TITLE: Your SEO Title\n\n"
+    "Title Rules:\n"
+    "- Style: Combine authoritative insight with a curiosity gap, engaging without cheap clickbait.\n"
+    "- Language: Write in clear, natural English regardless of the source title language.\n"
+    "- Cleanup: Completely replace the original title, strip site suffixes (e.g., `- YouTube`, `| Medium`), and do NOT append the original title in parentheses.\n"
+    "- Format: Put only `TITLE: Your Title` on the first line (no quotes, `📌`, or `#`), followed immediately by a newline and the structured report below.\n\n"
     "Please summarize the following content into structured sections. **Please use Markdown syntax for rich formatting (e.g., # headers, **bold**, - lists, etc.)**. The output should be in English with a clear and well-organized structure. Separate each section with a divider line.\n\n"
     "**Important**: The content may contain sponsored advertisements or promotions from the creator (such as VPN services, subscription services, app promotions, discount codes, etc.). Please automatically identify and **skip these promotional contents** - do not include them in the summary. Only summarize the core knowledge content.\n\n"
     "### ⓵ 【Easy Know】\nUse simple, accessible language to condense the content into approximately 120-200 words, suitable for quick comprehension. Use vivid analogies to aid understanding.\n\n"
@@ -306,10 +336,16 @@ def scrape_text_from_url(url):
         return [], f"抓取過程中發生錯誤：{str(e)}"  # 返回兩個值：空內容和錯誤信息
 
 
-def summarize(text_array, language='zh-TW', selected_model=None):
+def summarize(text_array, language='zh-TW', selected_model=None, raw_title=None, return_title=False):
     try:
         # 將所有段落合併成一個完整的文本
         full_text = "\n".join(text_array)
+        title_prefix = ""
+        if is_valid_raw_title(raw_title):
+            if language == 'en':
+                title_prefix = f"Original Title: {raw_title.strip()}\n\n"
+            else:
+                title_prefix = f"原始標題：{raw_title.strip()}\n\n"
         
         # 根據語言選擇對應的 system prompt
         if language == 'en':
@@ -336,7 +372,7 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         prompt = (
             "請將以下來源資料進行結構化總結：\n\n"
             "--- BEGIN SOURCE CONTENT ---\n"
-            f"{full_text}\n"
+            f"{title_prefix}{full_text}\n"
             "--- END SOURCE CONTENT ---"
         )
         
@@ -345,7 +381,12 @@ def summarize(text_array, language='zh-TW', selected_model=None):
 
         if not summary or not summary.strip():
             print("[ERROR] call_gpt_api returned empty summary.")
-            return "⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應或連線超時，請稍後再試或通知管理員。"
+            error_msg = "⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應或連線超時，請稍後再試或通知管理員。"
+            return (error_msg, None) if return_title else error_msg
+
+        # 先從最前面解析 AI 生成的 SEO 標題（必須在 # hashtag 跳脫之前執行）
+        ai_title, cleaned_summary = extract_title_from_summary(summary)
+        summary = cleaned_summary if cleaned_summary else summary
 
         # 針對 Hashtag 進行跳脫處理，避免被 Markdown 引擎誤判為 H1 標題
         # (將前方為空白或行首，且後方不為空白與 # 的 # 替換為 \#)
@@ -354,72 +395,14 @@ def summarize(text_array, language='zh-TW', selected_model=None):
         # 加入機器人宣傳語
         summary += "\n\n✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
 
-        return summary
+        return (summary, ai_title) if return_title else summary
     except Exception as e:
         print(f"Error: {e}")
-        return "Unknown error! Please contact the owner. ok@vip.david888.com"
+        err_msg = "Unknown error! Please contact the owner. ok@vip.david888.com"
+        return (err_msg, None) if return_title else err_msg
 
-def format_for_telegram(markdown_text):
-    """
-    將 Markdown 轉換成 Telegram 支援的有限 HTML 標籤
-    Telegram 僅支援 <b>, <i>, <u>, <s>, <a>, <code>, <pre>, <tg-spoiler> 等
-    不支援 <h1>~<h6>, <ul>, <li>, <p>, <br> 等標準 HTML
-    """
-    if not markdown_text:
-        return markdown_text
-        
-    try:
-        # 1. 將 Markdown 轉成完整 HTML
-        html = markdown.markdown(markdown_text, extensions=['nl2br'])
-        
-        # 2. 使用 BeautifulSoup 進行標籤轉換與過濾
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # 把標題 (<h1>~<h6>) 轉換為粗體並加換行
-        for v in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            new_text = f"<b>{v.get_text()}</b>\n\n"
-            v.replace_with(new_text)
-            
-        # 把清單項 (<li>) 轉換為帶有 bullet point 的文字
-        for li in soup.find_all('li'):
-            li.replace_with(f"• {li.get_text()}\n")
-            
-        # 移除 <ul> 和 <ol> 的外層包裹
-        for ul in soup.find_all(['ul', 'ol']):
-            ul.unwrap()
-            
-        # 把 <p> 轉換成帶有換行的純文字
-        for p in soup.find_all('p'):
-            p.replace_with(f"{p.get_text()}\n\n")
-            
-        # 把 <br> 替換為實際的換行符號
-        for br in soup.find_all('br'):
-            br.replace_with("\n")
-            
-        # 把 <hr> 替換為分隔線文字
-        for hr in soup.find_all('hr'):
-            hr.replace_with("\n----------\n")
-            
-        # 把 <strong> 轉換為 <b>
-        for strong in soup.find_all('strong'):
-            strong.name = 'b'
-            
-        # 把 <em> 轉換為 <i>
-        for em in soup.find_all('em'):
-            em.name = 'i'
-            
-        # 取得純文字並只保留 Telegram 允許的標籤
-        final_text = str(soup)
-        
-        # html.parser 的 unwrap 跟 replace_with 可能會留下多餘的全形空白或疊加換行，簡單清理
-        final_text = re.sub(r'\n{3,}', '\n\n', final_text)
-        # unescape 避免 &amp; 等實體在 Telegram 中顯示異常（雖然 Telegram HTML mode 有些自動處理，但清乾淨比較保險）
-        import html as html_lib
-        final_text = html_lib.unescape(final_text)
-        
-        return final_text.strip()
-    except Exception as e:
-        print(f"Error formatting for Telegram: {e}")
+_resolve_final_title = resolve_final_title
+_send_telegram_formatted = send_telegram_formatted
 def get_ytdlp_cookie_opts():
     """
     Dynamically determine the best available cookie configuration for yt-dlp.
@@ -1290,17 +1273,32 @@ async def handle_button_click(update, context):
             user_input = saved["user_input"]
             language = context.user_data.get('language', 'zh-TW')
             selected_model = context.user_data.get('selected_model', None)
-            summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
             if is_url(user_input):
                 original_url = user_input
-                title = await run_blocking(get_web_title, user_input)
-                summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
+                raw_title = await run_blocking(get_web_title, user_input, False)
             else:
                 original_url = None
-                title = "短文之摘要"
-                summary_with_original = f"📌 \n{summary}\n"
+                raw_title = None
+            summary, ai_title = await run_blocking(summarize, text_array, language=language, selected_model=selected_model, raw_title=raw_title, return_title=True)
+            if is_summary_error_message(summary):
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+                except Exception:
+                    pass
+                await context.bot.send_message(chat_id=chat_id, text=summary or "⚠️ 摘要生成失敗，請稍後再試。")
+                return
+            default_title = "Text Summary" if language == "en" else "短文之摘要"
+            title = resolve_final_title(ai_title, raw_title, language, default_title)
+            summary_with_original = compose_summary_with_source(
+                title,
+                summary,
+                original_url=original_url,
+                raw_title=raw_title,
+            )
 
             context.user_data['conversation_history'] = {
+                'title': title,
+                'raw_title': raw_title,
                 'original_content': text_array,
                 'summary': summary,
                 'source_url': original_url or 'text input',
@@ -1308,15 +1306,17 @@ async def handle_button_click(update, context):
                 'messages': [
                     {"role": "user", "content": f"請總結以下內容:\n\n{text_array[0][:500]}"},
                     {"role": "assistant", "content": summary}
-                ]
+                ],
+                'language': language,
             }
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             except Exception:
                 pass
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=summary_with_original,
+            await _send_telegram_formatted(
+                context.bot,
+                chat_id,
+                summary_with_original,
                 reply_markup=get_summary_quick_reply_keyboard(),
             )
         except Exception as e:
@@ -1335,7 +1335,7 @@ async def handle_button_click(update, context):
         chat_id = update.effective_chat.id
         language = context.user_data.get('language', 'zh-TW')
         selected_model = context.user_data.get('selected_model', None)
-        raw_content = "\n".join(history.get('original_content', [])) if history.get('original_content') else history.get('summary', '')
+        raw_content = build_quick_reply_source(history)
 
         # 1. 概念生圖 (Concept Art Generation)
         if action_type == 'image':
@@ -1347,6 +1347,9 @@ async def handle_button_click(update, context):
                     "Only output the visual prompt directly without quotes:\n\n" + raw_content[:2000]
                 )
                 image_prompt = await run_blocking(call_gpt_api, prompt_task, [{"role": "system", "content": "You are a visual concept prompt designer."}], selected_model=selected_model)
+                if not isinstance(image_prompt, str) or not image_prompt.strip():
+                    await status_msg.edit_text("⚠️ AI 模型暫時無回應，請稍後再試。", reply_markup=get_summary_quick_reply_keyboard())
+                    return
                 clean_prompt = image_prompt.strip().strip('"').strip("'")
                 image_url = build_concept_image_url(clean_prompt)
                 
@@ -1375,8 +1378,15 @@ async def handle_button_click(update, context):
         if action_type == 'wiki':
             status_msg = await query.message.reply_text("📚 正在發布至 David888 Wiki 知識庫...")
             try:
-                title = history.get('source_url', 'AI 內容深度解析')
-                content_to_publish = history.get('summary', '')
+                title = history.get('title') or history.get('source_url', 'AI 內容深度解析')
+                source_url = history.get('source_url')
+                original_url = source_url if source_url and is_url(source_url) else None
+                content_to_publish = prepare_wiki_content(
+                    title=title,
+                    summary=history.get('summary', ''),
+                    original_url=original_url,
+                    raw_title=history.get('raw_title'),
+                )
                 wiki_res = await run_blocking(publish_wiki_page, content_to_publish, title=title)
                 if wiki_res.get("success"):
                     reply = (
@@ -1399,6 +1409,14 @@ async def handle_button_click(update, context):
         try:
             sys_p, usr_p = build_transform_prompt(action_type, raw_content, language=language)
             transformed = await run_blocking(call_gpt_api, usr_p, [{"role": "system", "content": sys_p}], selected_model=selected_model)
+            if not isinstance(transformed, str) or not transformed.strip():
+                await status_msg.edit_text("⚠️ AI 模型暫時無回應，請稍後再試。", reply_markup=get_summary_quick_reply_keyboard())
+                return
+            if action_type == 'social':
+                transformed = clean_social_post_output(transformed)
+                if not transformed.strip():
+                    await status_msg.edit_text("⚠️ AI 模型暫時無回應，請稍後再試。", reply_markup=get_summary_quick_reply_keyboard())
+                    return
             
             # 保存到對話歷史
             history['messages'].append({"role": "user", "content": f"轉換風格: {action_type}"})
@@ -1410,16 +1428,24 @@ async def handle_button_click(update, context):
             except Exception:
                 pass
 
-            if len(transformed) <= 4000:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=transformed,
-                    reply_markup=get_summary_quick_reply_keyboard()
-                )
+            if action_type == 'social':
+                if len(transformed) <= 4000:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=transformed,
+                        reply_markup=get_summary_quick_reply_keyboard()
+                    )
+                else:
+                    for i in range(0, len(transformed), 4000):
+                        markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
+                        await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
             else:
-                for i in range(0, len(transformed), 4000):
-                    markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
-                    await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
+                await _send_telegram_formatted(
+                    context.bot,
+                    chat_id,
+                    transformed,
+                    reply_markup=get_summary_quick_reply_keyboard(),
+                )
         except Exception as e:
             print(f"[ERROR] Transform style failed: {e}")
             await status_msg.edit_text(f"❌ 轉換時發生錯誤：{str(e)}")
@@ -1517,9 +1543,9 @@ async def handle_yt2text(update, context):
             except Exception:
                 pass
 
-def get_video_title(video_url):
+def get_video_title(video_url, localize=True):
     """
-    使用 yt-dlp 提取影片標題，支援所有 yt-dlp 支援的網站，並自動在地化翻譯非中文標題
+    使用 yt-dlp 提取影片標題，支援所有 yt-dlp 支援的網站，並可選擇自動在地化翻譯非中文標題
     """
     try:
         ydl_opts = {
@@ -1535,25 +1561,25 @@ def get_video_title(video_url):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             raw_title = info.get('title', '影片')
-            return localize_title(raw_title)
+            return localize_title(raw_title) if localize else raw_title
     except Exception as e:
         print(f"Error extracting video title: {e}")
         return "影片"
 
-def get_web_title(user_input):
+def get_web_title(user_input, localize=True):
     """
     根據用戶提供的 URL，抓取網頁內容並提取標題。
-    支援所有 yt-dlp 支援的影片網站、Podcast 網站以及一般網頁，並自動在地化翻譯非中文標題
+    支援所有 yt-dlp 支援的影片網站、Podcast 網站以及一般網頁，並可選擇自動在地化翻譯非中文標題
     """
     # 檢查是否為 Pocket Casts URL (支援 pca.st 短網址與 pocketcasts.com)
     if is_pocketcasts_url(user_input):
         podcast_title = get_pocketcasts_title(user_input)
         if podcast_title:
-            return localize_title(podcast_title)
+            return localize_title(podcast_title) if localize else podcast_title
 
     # 首先檢查是否為 yt-dlp 支援的影片網站
     if is_supported_by_ytdlp(user_input):
-        return get_video_title(user_input)
+        return get_video_title(user_input, localize=localize)
     
     try:
         # 使用 trafilatura 抓取網頁內容
@@ -1565,7 +1591,7 @@ def get_web_title(user_input):
         # 使用 BeautifulSoup 解析網頁來提取標題
         soup = BeautifulSoup(downloaded, "lxml")
         title = soup.title.string.strip() if soup.title and soup.title.string else "無法提取標題"
-        return localize_title(title)
+        return localize_title(title) if localize else title
     
     except Exception as e:
         print(f"Error occurred while fetching title: {e}")
@@ -1996,8 +2022,15 @@ async def handle(action, update, context):
             
             # 如果沒有提供內容，但有上一次生成的摘要，則發布該摘要
             if not provided_text and history and history.get('summary'):
-                content = history.get('summary')
-                title = history.get('source_url', 'AI 內容摘要')
+                title = history.get('title') or history.get('source_url', 'AI 內容摘要')
+                source_url = history.get('source_url')
+                original_url = source_url if source_url and is_url(source_url) else None
+                content = prepare_wiki_content(
+                    title=title,
+                    summary=history.get('summary', ''),
+                    original_url=original_url,
+                    raw_title=history.get('raw_title'),
+                )
             elif provided_text:
                 lines = provided_text.split('\n', 1)
                 title = lines[0].lstrip('#').strip()
@@ -2079,23 +2112,33 @@ async def handle(action, update, context):
                 if is_conversation_followup(user_input, history):
                     language = context.user_data.get('language', 'zh-TW')
                     selected_model = context.user_data.get('selected_model', None)
-                    raw_content = "\n".join(history.get('original_content', [])) if history.get('original_content') else history.get('summary', '')
+                    raw_content = build_quick_reply_source(history)
 
                     # 檢查是否為自然語言風格轉換指令 (如：轉成社群貼文、給我大綱、1分鐘版、生圖、發布到wiki)
                     quick_intent = detect_quick_reply_intent(user_input)
                     if quick_intent:
                         if quick_intent == 'image':
-                            if show_processing and processing_message:
-                                try:
-                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-                                except Exception:
-                                    pass
                             prompt_task = (
                                 "Based on the following content, generate a concise, high-impact English visual prompt (under 35 words) "
                                 "for generating a concept art illustration that captures the central essence of this topic. "
                                 "Only output the visual prompt directly without quotes:\n\n" + raw_content[:2000]
                             )
                             image_prompt = await run_blocking(call_gpt_api, prompt_task, [{"role": "system", "content": "You are a visual concept prompt designer."}], selected_model=selected_model)
+                            if not isinstance(image_prompt, str) or not image_prompt.strip():
+                                err_text = "⚠️ AI 模型暫時無回應，請稍後再試。"
+                                if show_processing and processing_message:
+                                    try:
+                                        await processing_message.edit_text(err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                    except Exception:
+                                        await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                else:
+                                    await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                return
+                            if show_processing and processing_message:
+                                try:
+                                    await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                                except Exception:
+                                    pass
                             clean_prompt = image_prompt.strip().strip('"').strip("'")
                             image_url = build_concept_image_url(clean_prompt)
                             caption = (
@@ -2117,8 +2160,15 @@ async def handle(action, update, context):
                                     await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
                                 except Exception:
                                     pass
-                            title = history.get('source_url', 'AI 內容深度解析')
-                            content_to_publish = history.get('summary', '')
+                            title = history.get('title') or history.get('source_url', 'AI 內容深度解析')
+                            source_url = history.get('source_url')
+                            original_url = source_url if source_url and is_url(source_url) else None
+                            content_to_publish = prepare_wiki_content(
+                                title=title,
+                                summary=history.get('summary', ''),
+                                original_url=original_url,
+                                raw_title=history.get('raw_title'),
+                            )
                             wiki_res = await run_blocking(publish_wiki_page, content_to_publish, title=title)
                             if wiki_res.get("success"):
                                 reply = (
@@ -2136,6 +2186,28 @@ async def handle(action, update, context):
                         else:
                             sys_p, usr_p = build_transform_prompt(quick_intent, raw_content, language=language)
                             transformed = await run_blocking(call_gpt_api, usr_p, [{"role": "system", "content": sys_p}], selected_model=selected_model)
+                            if not isinstance(transformed, str) or not transformed.strip():
+                                err_text = "⚠️ AI 模型暫時無回應，請稍後再試。"
+                                if show_processing and processing_message:
+                                    try:
+                                        await processing_message.edit_text(err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                    except Exception:
+                                        await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                else:
+                                    await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                return
+                            if quick_intent == 'social':
+                                transformed = clean_social_post_output(transformed)
+                                if not transformed.strip():
+                                    err_text = "⚠️ AI 模型暫時無回應，請稍後再試。"
+                                    if show_processing and processing_message:
+                                        try:
+                                            await processing_message.edit_text(err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                        except Exception:
+                                            await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                    else:
+                                        await context.bot.send_message(chat_id=chat_id, text=err_text, reply_markup=get_summary_quick_reply_keyboard())
+                                    return
                             history['messages'].append({"role": "user", "content": user_input})
                             history['messages'].append({"role": "assistant", "content": transformed})
                             context.user_data['conversation_history'] = history
@@ -2144,19 +2216,28 @@ async def handle(action, update, context):
                                     await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
                                 except Exception:
                                     pass
-                            if len(transformed) <= 4000:
-                                await context.bot.send_message(chat_id=chat_id, text=transformed, reply_markup=get_summary_quick_reply_keyboard())
+                            if quick_intent == 'social':
+                                if len(transformed) <= 4000:
+                                    await context.bot.send_message(chat_id=chat_id, text=transformed, reply_markup=get_summary_quick_reply_keyboard())
+                                else:
+                                    for i in range(0, len(transformed), 4000):
+                                        markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
+                                        await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
                             else:
-                                for i in range(0, len(transformed), 4000):
-                                    markup = get_summary_quick_reply_keyboard() if (i + 4000 >= len(transformed)) else None
-                                    await context.bot.send_message(chat_id=chat_id, text=transformed[i:i+4000], reply_markup=markup)
+                                await _send_telegram_formatted(
+                                    context.bot,
+                                    chat_id,
+                                    transformed,
+                                    reply_markup=get_summary_quick_reply_keyboard(),
+                                )
                             return
 
                     # 處理一般深入續問
+                    orig_text = "\n".join(history.get('original_content', [])) if history.get('original_content') else raw_content
                     messages = [
                         {"role": "system", "content": "You are a helpful assistant that answers questions about previously summarized content."}
                     ]
-                    messages.append({"role": "user", "content": f"Original content:\n{raw_content[:3000]}"})
+                    messages.append({"role": "user", "content": f"Original content:\n{orig_text[:3000]}"})
                     messages.append({"role": "assistant", "content": f"Summary:\n{history.get('summary', '')[:2000]}"})
                     for msg in history.get('messages', [])[-3:]:
                         messages.append(msg)
@@ -2319,19 +2400,36 @@ async def handle(action, update, context):
                     # 獲取用戶語言偏好和選擇的模型
                     language = context.user_data.get('language', 'zh-TW')
                     selected_model = context.user_data.get('selected_model', None)
-                    
-                    summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
+
                     if is_url(user_input):
                         original_url = user_input
-                        title = await run_blocking(get_web_title, user_input)
-                        summary_with_original = f"📌 {title}\n\n{summary}\n\n▶ {original_url}"
+                        raw_title = await run_blocking(get_web_title, user_input, False)
                     else:
                         original_url = None
-                        title = "短文之摘要"  
-                        summary_with_original = f"📌 \n{summary}\n"
+                        raw_title = None
+
+                    summary, ai_title = await run_blocking(summarize, text_array, language=language, selected_model=selected_model, raw_title=raw_title, return_title=True)
+                    if is_summary_error_message(summary):
+                        if show_processing and processing_message:
+                            try:
+                                await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                            except Exception:
+                                pass
+                        await context.bot.send_message(chat_id=chat_id, text=summary or "⚠️ 摘要生成失敗，請稍後再試。")
+                        return
+                    default_title = "Text Summary" if language == "en" else "短文之摘要"
+                    title = resolve_final_title(ai_title, raw_title, language, default_title)
+                    summary_with_original = compose_summary_with_source(
+                        title,
+                        summary,
+                        original_url=original_url,
+                        raw_title=raw_title,
+                    )
                     
                     # 保存對話歷史到 context.user_data
                     context.user_data['conversation_history'] = {
+                        'title': title,
+                        'raw_title': raw_title,
                         'original_content': text_array,
                         'summary': summary,
                         'source_url': original_url or 'text input',
@@ -2354,6 +2452,8 @@ async def handle(action, update, context):
                     summary_data = {
                         "telegram_id": user_id,
                         "url": original_url,
+                        "title": title,
+                        "original_title": raw_title,
                         "summary": summary_with_original,
                         "original_content": text_array,  # 新增
                         "language": language,  # 新增
@@ -2369,45 +2469,13 @@ async def handle(action, update, context):
                         discord_message = f"🔔 新的摘要已生成：\n{summary_with_original}"
                         await run_blocking(send_to_discord, discord_message)
                     
-                    # 處理長消息，將 Markdown 轉換成 Telegram 支援的 HTML
-                    formatted_summary = format_for_telegram(summary_with_original)
-                    
-                    try:
-                        if len(formatted_summary) > 4000:
-                            parts = [formatted_summary[i:i+4000] for i in range(0, len(formatted_summary), 4000)]
-                            for idx, part in enumerate(parts):
-                                markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
-                                await context.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=part,
-                                    parse_mode='HTML',
-                                    reply_markup=markup
-                                )
-                        else:
-                            await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=formatted_summary,
-                                parse_mode='HTML',
-                                reply_markup=get_summary_quick_reply_keyboard()
-                            )
-                    except Exception as parse_err:
-                        print(f"[WARN] Failed to send HTML formatted message ({parse_err}), falling back to plain text...")
-                        raw_text = summary_with_original
-                        if len(raw_text) > 4000:
-                            parts = [raw_text[i:i+4000] for i in range(0, len(raw_text), 4000)]
-                            for idx, part in enumerate(parts):
-                                markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
-                                await context.bot.send_message(
-                                    chat_id=chat_id,
-                                    text=part,
-                                    reply_markup=markup
-                                )
-                        else:
-                            await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=raw_text,
-                                reply_markup=get_summary_quick_reply_keyboard()
-                            )
+                    # 處理長消息，將 Markdown 轉換成 Telegram 支援的 HTML（含純文字降級保護）
+                    await _send_telegram_formatted(
+                        context.bot,
+                        chat_id,
+                        summary_with_original,
+                        reply_markup=get_summary_quick_reply_keyboard(),
+                    )
                 else:
                     await context.bot.send_message(
                         chat_id=chat_id,
@@ -2503,10 +2571,24 @@ async def handle(action, update, context):
                 print(f"[DEBUG] 開始對整個文本進行摘要，文本長度: {len(text)} 字符")
                 language = context.user_data.get('language', 'zh-TW')
                 selected_model = context.user_data.get('selected_model', None)
-                summary = await run_blocking(summarize, [text], language=language, selected_model=selected_model)
+                raw_title = filename or None
+                summary, ai_title = await run_blocking(summarize, [text], language=language, selected_model=selected_model, raw_title=raw_title, return_title=True)
+                if is_summary_error_message(summary):
+                    if processing_message:
+                        try:
+                            await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
+                        except Exception as e:
+                            print(f"[DEBUG] 刪除 processing_message 失敗: {e}")
+                    await context.bot.send_message(chat_id=chat_id, text=summary or "⚠️ 摘要生成失敗，請稍後再試。")
+                    return
+                title = resolve_final_title(ai_title, raw_title, language, "文件摘要")
+                summary_with_title = compose_summary_with_source(
+                    title,
+                    summary,
+                    original_url=None,
+                    raw_title=raw_title,
+                )
 
-                # 轉義 Markdown 特殊字符
-                escaped_summary = escape_markdown(summary, version=2)
                 print("[DEBUG] 摘要完成，準備發送")
 
                 if processing_message:
@@ -2517,6 +2599,8 @@ async def handle(action, update, context):
 
                 # 保存對話歷史到 context.user_data，支援續問與快捷風格轉換
                 context.user_data['conversation_history'] = {
+                    'title': title,
+                    'raw_title': raw_title,
                     'original_content': [text],
                     'summary': summary,
                     'source_url': filename or 'uploaded file',
@@ -2527,23 +2611,16 @@ async def handle(action, update, context):
 
                 # 發送 PDF 摘要到 Discord Webhook（如果啟用）
                 if enable_discord_webhook:
-                    discord_message = f"🔔 已成功處理一份文件，摘要內容如下：\n{summary}"
+                    discord_message = f"🔔 已成功處理一份文件，摘要內容如下：\n{summary_with_title}"
                     await run_blocking(send_to_discord, discord_message)
 
-                # 分批發送摘要並附帶 Quick Reply 按鈕
-                if len(summary) > 4000:
-                    parts = [summary[i:i+4000] for i in range(0, len(summary), 4000)]
-                    for idx, part in enumerate(parts):
-                        markup = get_summary_quick_reply_keyboard() if (idx == len(parts) - 1) else None
-                        await context.bot.send_message(chat_id=chat_id, text=part, reply_markup=markup)
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=summary, reply_markup=get_summary_quick_reply_keyboard())
-
-                if processing_message:
-                    try:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=processing_message.message_id)
-                    except Exception as e:
-                        print(f"[DEBUG] 刪除 processing_message 失敗: {e}")
+                # 使用 Telegram HTML 格式化發送並附帶 Quick Reply 按鈕（含純文字降級保護）
+                await _send_telegram_formatted(
+                    context.bot,
+                    chat_id,
+                    summary_with_title,
+                    reply_markup=get_summary_quick_reply_keyboard(),
+                )
 
             except Exception as e:
                 print(f"[ERROR] Error processing file: {e}")

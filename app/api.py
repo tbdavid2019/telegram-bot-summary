@@ -60,6 +60,7 @@ class SummarizeRequest(BaseModel):
 class SummarizeResponse(BaseModel):
     status: str = Field("success", description="Response status.")
     title: str = Field(..., description="The resolved title of the content.")
+    original_title: Optional[str] = Field(None, description="The original raw title before SEO optimization.")
     original_url: Optional[str] = Field(None, description="The original URL if the input was a URL.")
     summary: str = Field(..., description="The Markdown-formatted summary.")
     is_ad: bool = Field(False, description="Whether the content was flagged as an advertisement or promotional spam.")
@@ -70,27 +71,34 @@ def health_check():
 
 @app.post("/api/v1/summarize", response_model=SummarizeResponse)
 async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_token)):
-    from app.services.content import is_url, is_safe_url
-    
+    from app.services.content import (
+        is_url,
+        is_safe_url,
+        is_valid_raw_title,
+        is_summary_error_message,
+        sanitize_raw_title,
+        resolve_final_title,
+    )
+
     user_input = request.input.strip()
     language = request.language.strip()
     selected_model = request.model
-    
-    if is_url(user_input) and not is_safe_url(user_input):
+    is_url_input = is_url(user_input)
+
+    if is_url_input and not await run_blocking(is_safe_url, user_input):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid, blocked, or prohibited private/internal URL."
         )
 
     from app.legacy import process_user_input, summarize, get_web_title
-    
+
     logger.info(f"Received summary request. Input length: {len(user_input)}, Lang: {language}")
-    
+
     try:
         # 1. Process the input (fetch website, get youtube transcript, or split text)
         text_array = await run_blocking(process_user_input, user_input)
-        
-        # Check if returned error message array
+
         error_msgs = [
             "暫時無法轉錄",
             "該影片沒有可用的字幕，且音頻轉換功能未啟用。",
@@ -105,8 +113,7 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
             "處理 Apple Podcast URL 時發生錯誤。",
             "Podcast 音頻轉錄失敗。"
         ]
-        
-        # Handle scrape_text_from_url returning (text_array, error)
+
         if isinstance(text_array, tuple):
             if len(text_array) == 2 and not text_array[0]:
                 raise HTTPException(
@@ -115,13 +122,13 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
                 )
             else:
                 text_array = text_array[0]
-                
+
         if isinstance(text_array, list) and len(text_array) == 1 and text_array[0] in error_msgs:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Content extraction failed: {text_array[0]}"
             )
-            
+
         if not text_array:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -134,36 +141,49 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
             is_ad, decision_data = await run_blocking(
                 is_advertisement_content,
                 text_array,
-                url=user_input if is_url(user_input) else None,
+                url=user_input if is_url_input else None,
             )
             if is_ad:
-                title = await run_blocking(get_web_title, user_input) if is_url(user_input) else "Text Summary"
+                raw_title = await run_blocking(get_web_title, user_input, False) if is_url_input else None
+                title = resolve_final_title(None, raw_title, language, "Text Summary")
                 return SummarizeResponse(
                     status="hidden",
                     title=title,
-                    original_url=user_input if is_url(user_input) else None,
+                    original_title=sanitize_raw_title(raw_title) if is_valid_raw_title(raw_title) else None,
+                    original_url=user_input if is_url_input else None,
                     summary="🚫 內容已隱藏：經 Clef 決策模型判定為商業廣告或垃圾行銷訊息。",
                     is_ad=True,
                 )
-            
-        # 3. Summarize the text array
-        summary = await run_blocking(summarize, text_array, language=language, selected_model=selected_model)
-        
-        # 3. Determine title and original url
-        if is_url(user_input):
+
+        # 3. Determine raw title and summarize the text array
+        if is_url_input:
             original_url = user_input
-            title = await run_blocking(get_web_title, user_input)
+            raw_title = await run_blocking(get_web_title, user_input, False)
         else:
             original_url = None
-            title = "Text Summary"
-            
+            raw_title = None
+
+        summarize_result = await run_blocking(summarize, text_array, language=language, selected_model=selected_model, raw_title=raw_title, return_title=True)
+        if isinstance(summarize_result, tuple) and len(summarize_result) == 2:
+            summary, ai_title = summarize_result
+        else:
+            summary, ai_title = summarize_result, None
+        if is_summary_error_message(summary):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=summary,
+            )
+
+        title = resolve_final_title(ai_title, raw_title, language, "Text Summary")
+
         return SummarizeResponse(
             status="success",
             title=title,
+            original_title=sanitize_raw_title(raw_title) if is_valid_raw_title(raw_title) else None,
             original_url=original_url,
             summary=summary
         )
-        
+
     except HTTPException as he:
         raise he
     except Exception as e:

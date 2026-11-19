@@ -181,8 +181,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        [按鈕: 🎨 繪製概念圖]  [按鈕: 📚 發布至 Wiki]
 
 👤 用戶: [點擊 📱 社群貼文風] 或 直接輸入「轉成社群貼文」
-🤖 Bot: 🔥【這部影片徹底顛覆了我對 AI 的想像！】
-       ...[社群爆款 Hook + 重點條列 + Emoji + Hashtags]
+🤖 Bot: [單篇 220～320 字高互動純文字爆文：強反差 Hook + 個人觀點／犀利吐槽 + 零 Markdown，可直接一鍵複製貼上 Threads / X]
 ```
 
 ### 場景 12: 🛡️ Clef 決策模型廣告過濾與強制查看
@@ -215,7 +214,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 - **🛡️ Clef-Flash System One 決策模型廣告與垃圾訊息智慧過濾**：整合自建 Clef-Flash 決策推論引擎（極速推論 <200ms、免外部 Token 費用），採用雙節點高可用容錯（Primary: `https://clef.create360.ai/v1/systemone` | Fallback: `https://clef.aiurl.tw/v1/systemone`），預設開啟並設定 30 秒逾時保護。若判定為廣告行銷訊息將直接隱藏輸出，並附帶 `[👁️ 仍要查看摘要]` 按鈕供用戶隨時強制查看；支援三層式快取架構（Memory $\rightarrow$ MongoDB $\rightarrow$ Disk），後續用戶讀取相同內容無需重複推論；雙節點皆異常時自動平滑降級放行，確保系統 100% 穩定可用。
 - **🎙️ Pocket Casts 與 pca.st 短網址深度整合**：原生支援 Pocket Casts (`pocketcasts.com`, `play.pocketcasts.com`) 與官方短網址 (`pca.st`)，自動解析單集 UUID 並透過 Pocket Casts API 直接鎖定單集音訊與真實標題，無懼 CloudFront/AWS WAF 挑戰，經由 Whisper 轉錄輸出高精確逐字稿與重點摘要。
-- **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！
+- **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！Quick Reply 優先採用濃縮後的標題與摘要作為轉換素材（不再被長逐字稿開頭截斷），其中 `1min`、`outline`、`qa` 支援 Telegram HTML 安全分片與單塊純文字降級排版，而「**📱 社群貼文風**」專為 Threads / X 打造為單篇繁中 220～320 字（< 400 字元）／英文 55–85 words（< 450 字元）、帶個人觀點與適度犀利吐槽的零 Markdown 純文字爆文，長按即可一鍵複製發布。
 - **⚡ 5 段式結構化摘要與推薦續問**：標準產出容易懂、總結、觀點評論、重點條列、測驗三題、💡 推薦 3 個深入續問問題，兼具深度與互動性。
 - **David888 Wiki 知識庫發布（LLM 深度報告好讀版）**：整合 `https://wiki.david888.com/api`，當使用者交代 LLM 撰寫長篇分析報告時，LLM 會自動將完整 Markdown 發布至 David888 Wiki，並回傳排版優美的公開閱讀連結（`shareUrl`）與 Reveal 2D 簡報模式（`presentUrl`）；亦可透過 `/wiki` 手動一鍵發布或 `/wikiread` 遠端讀取。
 - **自然 AI 對話與智慧意圖分流**：日常打字（問候、編程諮詢、問題解答、隨意聊天）會以自然流暢的 AI 助理模式對話，並保留最近對話上下文；只有發送 URL、上傳文件或明確要求總結時，才會啟動結構化摘要。
@@ -225,7 +224,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 - **月老姻緣與生肖合婚 (`/yiyu`)**：支援月老求籤解籤詩與出生年生肖契合度合婚測算。
 - **Whisper ASR 時間戳聽寫**：調用 GROQ Whisper API，預設輸出 `[MM:SS]` 精確時間軸標記，並以 `.txt` 檔案直接下載。
 - **多國語言 YouTube 繁中音軌優先與字幕優先**：支援 YouTube 多音軌配音影片，智慧優先選取繁體中文（`zh-Hant`、`zh-TW`、`zh-HK`）及中文音軌進行語音聽寫 (`audio_transcription`) 與音訊下載 (`/yt2audio`)；字幕提取自動優先配對繁體中文字幕。
-- **外語影片與網頁標題 AI 繁體在地化翻譯**：遇到非中文標題（如西班牙語、英語、日語假名、韓語等影片或網頁），自動透過 LLM 在地化翻譯為流暢繁體中文，格式化呈現為 `{繁中標題} ({原始外語標題})`，同步套用於 Telegram 摘要、David888 Wiki 發布與郵件主旨。
+- **🏷️ AI SEO 標題生成與原始標題對照**：單次 LLM 推論即可同時產出「專業知識＋好奇心反差」的部落格級繁體中文 SEO 標題與結構化摘要（零額外 API 呼叫成本），自動將簡體中文、外語或平庸網頁標題優化並完全取代為主標題；若有有效且不同的原始標題，會於文末來源連結上方保留 `🏷️ 原始標題：{raw_title}` 供對照，並同步套用於 Telegram 推播、David888 Wiki 發布、郵件主旨與 FastAPI `original_title` 欄位。
 - **泛化影片支援**：支援 1000+ 影片網站，包括 YouTube、Vimeo、Bilibili、Dailymotion、TikTok、Twitch、Facebook、Instagram 等。
 - **Whisper 聽寫功能**：調用免費的 GROQ Whisper API，用於自動生成字幕。
 - **無字幕處理**：當影片無字幕時，可以啟用聽力辨識生成字幕。
@@ -623,7 +622,8 @@ API_PORT=8001
     ```json
     {
       "status": "success",
-      "title": "影片標題或網頁標題",
+      "title": "AI SEO 優化後標題",
+      "original_title": "Original Video or Webpage Title",
       "original_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       "summary": "# ⓵ 【容易懂 Easy Know】\n..."
     }

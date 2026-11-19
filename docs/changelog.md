@@ -1,5 +1,31 @@
 # Changelog
 
+## [2026-11-19] - LLM SEO Title Generation & Viral Social Post Overhaul
+
+### ✨ Added
+- **🏷️ 單次 LLM 整合產出「專業知識＋好奇心反差」SEO 標題 (`app/services/content.py`, `app/legacy.py`, `main.py`, `app/api.py`, `api.py`)**:
+  - 於 `SYSTEM_PROMPT_ZH` 與 `SYSTEM_PROMPT_EN` 開頭規範 LLM 在回覆第一行輸出 `TITLE: ...`，以零額外 API 呼叫成本同時產出部落格 SEO 標題與結構化摘要（強制改寫簡體/外文/平庸原標題為自然道地的台灣繁體中文或英文）。
+  - 於 `app/services/content.py` 新增 `sanitize_raw_title`、`is_valid_raw_title`、`is_summary_error_message`、`extract_title_from_summary`（嚴格僅檢查第一個非空行、淨化成對粗斜體與引號、並於無效標題行時自動剝除避免外洩）、`resolve_final_title`、`compose_summary_with_source` 與 `prepare_wiki_content`（保留原有 `needs_title_localization` 與 `localize_title` 共用佔位清單 `_INVALID_RAW_TITLES`）。
+  - 主標題完全取代原始標題，不再附加 `(Original Title)` 括號；若存在有效且不同的原始標題，統一於文章底部來源連結上方呈現 `🏷️ 原始標題：{raw_title}`；Email 主旨同步經 `sanitize_raw_title` 淨化防止換行標頭異常。
+  - `summarize()` 新增 `raw_title` 與 `return_title` 選用參數（先解析標題行再進行 `#` Hashtag 跳脫）；`get_video_title()` 與 `get_web_title()` 新增 `localize` 開關避免重複呼叫 LLM；`resolve_final_title()` 一致整合所有摘要進入點（一般訊息、廣告強制查看 `show_ad:`、文件上傳 `handle('file')`、FastAPI `/api/v1/summarize` 含 `is_ad` 隱藏分支）。
+  - `SummarizeResponse` (`app/api.py`, `api.py`) 新增選用欄位 `original_title`，並於 `api_summarize` 改用 `await run_blocking(is_safe_url, user_input)` 避免同步 DNS 解析阻塞事件迴圈。
+- **🧩 抽出 Telegram HTML 安全分片與遞送服務 (`app/services/telegram_delivery.py`)**:
+  - 新增 `_split_markdown_safely(text, limit=3200)`（於段落/換行/句點/空白邊界安全切分原始 Markdown）。
+  - 重構 `format_for_telegram`：先轉換 `<strong>`/`<em>` 為 `<b>`/`<i>`、以 `decode_contents()` 保留段落與清單內的行內樣式、移除破壞實體的 `html.unescape()` 以安全渲染 `a < b` / `Vec<T>` / `<script>`，並嚴格 unwrap 非 Telegram 支援的 HTML 標籤（僅保留 `b, i, u, s, a, code, pre, tg-spoiler`）。
+  - 重構 `send_telegram_formatted`：以 `run_blocking` 在背景執行緒格式化每塊分片，**單塊 HTML 失敗或超限時僅針對該塊降級純文字發送**，絕不重複發送先前已成功送達的前段訊息。
+- **📚 David888 Wiki 頁首保護與來源資訊一致化 (`app/services/content.py`, `app/legacy.py`, `main.py`)**:
+  - `prepare_wiki_content()` 自動將摘要內文中的 `# ` 降級為 `## `（避免 `sanitize_wiki_markdown` 誤刪一級標題前的摘要段落），以 `# {clean_title}` 作為唯一首行 H1 標題，並於文末附上原始標題與來源連結。
+
+### 🔄 Changed & Improved
+- **📱 重構「社群貼文風」為單篇高互動純文字爆文版 (`app/services/quick_reply.py`)**:
+  - 重寫 `build_transform_prompt("social", ...)`，改為產出單篇 **220～320 字（嚴格 < 400 字元）**（英文版 **55-85 words / < 450 字元**）、具備個人觀點與適度犀利吐槽、強反差 Hook 開頭且**零 Markdown** 的高互動貼文，並於所有轉換 Prompt 加入 `--- BEGIN SOURCE CONTENT ---` 資料邊界保護。
+  - 強化 `clean_social_post_output(text, max_chars=480)`：清除程式碼圍欄、`###` 標題、`>` 引用、清單符號、`**/__/*/~~/\`` 與 Markdown 連結，收緊標籤前綴正則以保留自然口語「重點：」「標題：」，並內建 480 字元優雅句末截斷保護。
+- **🎛️ 修復全系列 Quick Reply 素材來源與 LLM 失敗攔截 (`app/services/quick_reply.py`, `app/legacy.py`, `main.py`, `app/api.py`, `api.py`)**:
+  - 優化 `build_quick_reply_source()`：僅剝除結尾固定 bot 宣傳語，並於摘要過短時依剩餘字元預算逐段累積原文。
+  - 所有摘要進入點以 `is_summary_error_message()` 攔截失敗或空回應，絕不寫入 MongoDB、寄送 Email、推送 Discord 或覆寫對話歷史（FastAPI 端點改回 HTTP 503）；Quick Reply 亦攔截空回應避免覆蓋歷史與發送空訊息。
+- **🧪 補充完整單元測試 (`tests/test_content.py`, `tests/test_quick_reply.py`, `tests/test_telegram_delivery.py`)**:
+  - 新增分片、錯誤訊息攔截、標題淨化、第一行嚴謹提取、Wiki 頁首降級、社群輸出清理與長度上限、及模擬分塊局部失敗不重送的完整測試。
+
 ## [2026-11-17] - Upstream Dependency Upgrades & Cleanup
 
 ### 🔄 Changed & Improved

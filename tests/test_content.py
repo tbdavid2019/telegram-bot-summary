@@ -13,6 +13,14 @@ from app.services.content import (
     transcribe_local_audio,
     needs_title_localization,
     localize_title,
+    sanitize_raw_title,
+    is_valid_raw_title,
+    is_summary_error_message,
+    _split_markdown_safely,
+    extract_title_from_summary,
+    resolve_final_title,
+    compose_summary_with_source,
+    prepare_wiki_content,
 )
 
 
@@ -253,6 +261,204 @@ class TestContentHelpers(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 convert_document_to_markdown("scanned.pdf")
             self.assertIn("掃描影像檔", str(ctx.exception))
+
+    def test_is_valid_raw_title(self):
+        self.assertTrue(is_valid_raw_title("How Nvidia Built an AI Empire"))
+        self.assertTrue(is_valid_raw_title("英伟达最新财报深度解析"))
+        self.assertTrue(is_valid_raw_title("輝達財報背後的三個關鍵訊號"))
+        self.assertFalse(is_valid_raw_title(None))
+        self.assertFalse(is_valid_raw_title(""))
+        self.assertFalse(is_valid_raw_title("A"))
+        self.assertFalse(is_valid_raw_title("影片"))
+        self.assertFalse(is_valid_raw_title("無法提取標題"))
+        self.assertFalse(is_valid_raw_title("無法下載該網頁的內容。"))
+        self.assertFalse(is_valid_raw_title("抓取過程中發生錯誤。"))
+        self.assertFalse(is_valid_raw_title("短文之摘要"))
+        self.assertFalse(is_valid_raw_title("Text Summary"))
+        self.assertFalse(is_valid_raw_title("YouTube"))
+        self.assertFalse(is_valid_raw_title("X"))
+
+    def test_extract_title_from_summary_variants(self):
+        # Standard TITLE: with --- separator
+        title, body = extract_title_from_summary("TITLE: 輝達差點沒有黃仁勳？揭開 AI 帝國內幕\n---\n### ⓵ 【容易懂】\n內容正文")
+        self.assertEqual(title, "輝達差點沒有黃仁勳？揭開 AI 帝國內幕")
+        self.assertTrue(body.startswith("### ⓵ 【容易懂】"))
+
+        # Leading blank lines, fullwidth colon, markdown bold & quotes
+        title2, body2 = extract_title_from_summary('\n\n**TITLE：** 「📌 **AI 算力戰爭的下一站**」\n\n正文開始\n---\n第二段')
+        self.assertEqual(title2, "AI 算力戰爭的下一站")
+        self.assertEqual(body2, "正文開始\n---\n第二段")
+
+        # Heading prefix and Chinese label variants
+        title3, body3 = extract_title_from_summary("## SEO標題：《為什麼工程師都在學 Rust？》\n\n第一段")
+        self.assertEqual(title3, "為什麼工程師都在學 Rust？")
+        self.assertEqual(body3, "第一段")
+
+        title4, body4 = extract_title_from_summary("# title: Why Small Models Win in 2026\nBody text")
+        self.assertEqual(title4, "Why Small Models Win in 2026")
+        self.assertEqual(body4, "Body text")
+
+    def test_extract_title_from_summary_rejects_missing_or_invalid(self):
+        # No TITLE line -> unchanged
+        raw = "### ⓵ 【容易懂】\n這是一段沒有標題行的摘要\n\nTITLE: 第四行後不應被拔除"
+        # First 3 non-empty lines don't have TITLE: (lines: 1=###, 2=這是..., 3=TITLE:...)
+        # Actually line 3 IS the 3rd non-empty line, so put it as 4th non-empty line to verify limit
+        raw_four = "### ⓵ 【容易懂】\n第一句\n第二句\nTITLE: 第四行後不應被拔除"
+        title, body = extract_title_from_summary(raw_four)
+        self.assertIsNone(title)
+        self.assertEqual(body, raw_four)
+
+        # Error messages must not be treated as title, and invalid TITLE line is stripped from non-empty body
+        err_text = "TITLE: ⚠️ 摘要生成失敗\n內文"
+        t_err, b_err = extract_title_from_summary(err_text)
+        self.assertIsNone(t_err)
+        self.assertEqual(b_err, "內文")
+
+        err_text2 = "TITLE: ❌ 模型無回應\n內文"
+        self.assertEqual(extract_title_from_summary(err_text2), (None, "內文"))
+
+        err_text3 = "TITLE: Unknown error occurred\n內文"
+        self.assertEqual(extract_title_from_summary(err_text3), (None, "內文"))
+
+        # Too long (>120 chars)
+        long_title_text = "TITLE: " + ("超長標題" * 35) + "\n內文"
+        self.assertEqual(extract_title_from_summary(long_title_text), (None, "內文"))
+
+    def test_compose_summary_with_source(self):
+        # URL + distinct raw_title
+        out1 = compose_summary_with_source(
+            "輝達差點沒有黃仁勳？",
+            "摘要內文",
+            original_url="https://youtube.com/watch?v=123",
+            raw_title="How Nvidia Almost Died",
+        )
+        self.assertEqual(
+            out1,
+            "📌 輝達差點沒有黃仁勳？\n\n摘要內文\n\n🏷️ 原始標題：How Nvidia Almost Died\n▶ https://youtube.com/watch?v=123",
+        )
+
+        # URL + identical raw_title -> no duplicate raw title line
+        out2 = compose_summary_with_source(
+            "相同標題測試",
+            "摘要內文",
+            original_url="https://example.com/post",
+            raw_title="相同標題測試",
+        )
+        self.assertEqual(out2, "📌 相同標題測試\n\n摘要內文\n\n▶ https://example.com/post")
+
+        # URL + invalid placeholder raw_title -> omit raw title line
+        out3 = compose_summary_with_source(
+            "SEO 優化後標題",
+            "摘要內文",
+            original_url="https://example.com/404",
+            raw_title="無法下載該網頁的內容。",
+        )
+        self.assertEqual(out3, "📌 SEO 優化後標題\n\n摘要內文\n\n▶ https://example.com/404")
+
+        # Non-URL short text without raw_title
+        out4 = compose_summary_with_source("短文核心洞察", "摘要內文")
+        self.assertEqual(out4, "📌 短文核心洞察\n\n摘要內文")
+
+        # Non-URL file with distinct filename raw_title
+        out5 = compose_summary_with_source("Q3 財報關鍵解讀", "摘要內文", raw_title="q3_report.pdf")
+        self.assertEqual(out5, "📌 Q3 財報關鍵解讀\n\n摘要內文\n\n🏷️ 原始標題：q3_report.pdf")
+
+        # Multi-line raw title and title should be sanitized
+        out6 = compose_summary_with_source(
+            "第一行\n第二行",
+            "摘要內文",
+            original_url="https://example.com",
+            raw_title="Raw\n\tTitle\x00Here",
+        )
+        self.assertEqual(
+            out6,
+            "📌 第一行 第二行\n\n摘要內文\n\n🏷️ 原始標題：Raw Title Here\n▶ https://example.com",
+        )
+
+    def test_sanitize_raw_title(self):
+        self.assertEqual(sanitize_raw_title("  Hello\n\r\tWorld\x07  "), "Hello World")
+        self.assertEqual(sanitize_raw_title(None), "")
+        self.assertEqual(len(sanitize_raw_title("A" * 250, max_length=200)), 200)
+
+    def test_is_summary_error_message(self):
+        self.assertTrue(is_summary_error_message(None))
+        self.assertTrue(is_summary_error_message(""))
+        self.assertTrue(is_summary_error_message("   \n  "))
+        self.assertTrue(is_summary_error_message("⚠️ 摘要生成失敗：所有 AI 模型服務暫時無法回應"))
+        self.assertTrue(is_summary_error_message("Unknown error! Please contact the owner."))
+        self.assertFalse(is_summary_error_message("### ⓵ 【容易懂】\n這是正常摘要內容。"))
+
+    def test_split_markdown_safely(self):
+        self.assertEqual(_split_markdown_safely(""), [])
+        self.assertEqual(_split_markdown_safely("短文", limit=100), ["短文"])
+
+        para1 = "第一段內容。" * 40
+        para2 = "第二段內容。" * 40
+        para3 = "第三段內容。" * 40
+        text = f"{para1}\n\n{para2}\n\n{para3}"
+        chunks = _split_markdown_safely(text, limit=300)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 300)
+            self.assertTrue(chunk.strip())
+
+        # Hard-split continuous string with no boundaries
+        solid = "X" * 750
+        solid_chunks = _split_markdown_safely(solid, limit=300)
+        self.assertEqual([len(c) for c in solid_chunks], [300, 300, 150])
+
+    def test_extract_title_only_first_line_and_invalid_stripped(self):
+        # Line 2 has 標題：, line 1 does not -> must NOT extract line 2
+        body_with_line2 = "### ⓵ 【容易懂】\n標題：這不是主標題\n內容繼續"
+        self.assertEqual(extract_title_from_summary(body_with_line2), (None, body_with_line2))
+
+        # Paired __ and * markers cleaned
+        t1, b1 = extract_title_from_summary("TITLE: __*為什麼小模型正在贏*__\n\n正文內容")
+        self.assertEqual(t1, "為什麼小模型正在贏")
+        self.assertEqual(b1, "正文內容")
+
+        # Invalid TITLE line on line 1 with valid body -> strip leaked TITLE line
+        t2, b2 = extract_title_from_summary("TITLE: ⚠️ 模型錯誤\n---\n正常摘要內文")
+        self.assertIsNone(t2)
+        self.assertEqual(b2, "正常摘要內文")
+
+        t3, b3 = extract_title_from_summary("TITLE:   \n\n正常摘要內文")
+        self.assertIsNone(t3)
+        self.assertEqual(b3, "正常摘要內文")
+
+    def test_extract_title_only_title_no_body(self):
+        only_title = "TITLE: 只有一行標題卻沒有摘要內文"
+        self.assertEqual(extract_title_from_summary(only_title), (None, only_title))
+
+    def test_resolve_final_title(self):
+        self.assertEqual(resolve_final_title("AI\n優化標題", "Raw Title"), "AI 優化標題")
+        # Valid raw title fallback returns sanitized raw title directly without LLM call
+        self.assertEqual(resolve_final_title(None, "How\nNvidia Won"), "How Nvidia Won")
+        # Invalid/placeholder raw title must return default_title
+        self.assertEqual(resolve_final_title(None, "無法下載該網頁的內容。", default_title="短文之摘要"), "短文之摘要")
+        self.assertEqual(resolve_final_title(None, "影片", default_title="Text Summary"), "Text Summary")
+
+    def test_prepare_wiki_content_demotes_h1_and_appends_source(self):
+        summary = (
+            "# 摘要開頭一級標題\n"
+            "第一段說明\n\n"
+            "### ⓶ 【總結】\n"
+            "重點整理\n\n"
+            "✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
+        )
+        wiki_md = prepare_wiki_content(
+            title="輝達帝國背後的秘密",
+            summary=summary,
+            original_url="https://youtube.com/watch?v=abc",
+            raw_title="Nvidia Secrets",
+        )
+        lines = wiki_md.splitlines()
+        self.assertEqual(lines[0], "# 輝達帝國背後的秘密")
+        self.assertIn("## 摘要開頭一級標題", wiki_md)
+        self.assertNotIn("\n# 摘要開頭一級標題", wiki_md)
+        self.assertNotIn("Oli小濃縮 Summary bot", wiki_md)
+        self.assertIn("🏷️ 原始標題：Nvidia Secrets", wiki_md)
+        self.assertIn("▶ 原始連結：https://youtube.com/watch?v=abc", wiki_md)
 
 
 if __name__ == "__main__":

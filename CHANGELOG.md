@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-19
+
+### Added & Improved
+- **LLM 整合產出 SEO 繁體中文標題**：單次 LLM 呼叫同步產出「專業知識＋好奇心反差」SEO 標題與摘要，主標題完全取代原標題並於文章底部來源上方標註 `🏷️ 原始標題：{raw_title}`；FastAPI `SummarizeResponse` 新增選用欄位 `original_title`，並統一淨化原始標題與郵件主旨。
+- **「📱 社群貼文風」重構為單篇高互動純文字爆文版**：`build_transform_prompt("social")` 改為繁中 220～320 字（< 400 字元）／英文 55–85 words（< 450 字元）、帶個人觀點／犀利吐槽、零 Markdown 的 Threads / X 爆文，並以 `clean_social_post_output` 確保純文字清理與 480 字元長度保護。
+- **Telegram HTML 安全分片、失敗攔截與 Wiki 頁首保護**：新增 `app/services/telegram_delivery.py`（段落邊界安全切分、單塊 HTML 失敗獨立降級不重送已送出前段）、`is_summary_error_message` 明確攔截失敗或空回應（API 回傳 503），以及 `prepare_wiki_content` 保護 Wiki 首行唯一 H1 與來源資訊。
+
+---
+
 ## 2026-11-17
 
 ### Changed & Improved
