@@ -89,6 +89,7 @@ class SummarizeRequest(BaseModel):
     input: str = Field(..., description="The YouTube URL, website URL, or text to summarize.", min_length=1, max_length=1_000_000)
     language: str = Field("zh-TW", description="The output summary language (e.g. 'zh-TW', 'en').", max_length=50)
     model: Optional[str] = Field(None, description="Optional custom LLM model override.", max_length=100)
+    user_note: Optional[str] = Field(None, description="Optional personal note, commentary, or questions to prepend and address in the summary.", max_length=4000)
 
 class SummarizeResponse(BaseModel):
     status: str = Field("success", description="Response status.")
@@ -111,11 +112,36 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
         is_summary_error_message,
         sanitize_raw_title,
         resolve_final_title,
+        parse_url_and_user_note,
+        format_user_note_block,
     )
 
     user_input = request.input.strip()
     language = request.language.strip()
     selected_model = request.model
+    extracted_url, inline_note = await run_blocking(parse_url_and_user_note, user_input)
+    if extracted_url:
+        user_input = extracted_url
+
+    explicit_note = request.user_note.strip() if isinstance(request.user_note, str) and request.user_note.strip() else None
+    if explicit_note and inline_note and explicit_note != inline_note:
+        sep = "\n\n"
+        total_budget = 4000
+        if len(explicit_note) + len(sep) + len(inline_note) <= total_budget:
+            effective_note = f"{explicit_note}{sep}{inline_note}"
+        else:
+            explicit_part = explicit_note[:3000].rstrip()
+            remaining_budget = total_budget - len(explicit_part) - len(sep)
+            if remaining_budget > 0:
+                inline_part = inline_note[:remaining_budget].rstrip()
+                effective_note = f"{explicit_part}{sep}{inline_part}" if inline_part else explicit_part
+            else:
+                effective_note = explicit_note[:total_budget]
+    else:
+        effective_note = explicit_note or inline_note
+        if effective_note and len(effective_note) > 4000:
+            effective_note = effective_note[:4000]
+
     is_url_input = is_url(user_input)
 
     if is_url_input and not await run_blocking(is_safe_url, user_input):
@@ -196,7 +222,7 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
             original_url = None
             raw_title = None
 
-        summarize_result = await run_blocking(summarize, text_array, language=language, selected_model=selected_model, raw_title=raw_title, return_title=True)
+        summarize_result = await run_blocking(summarize, text_array, language=language, selected_model=selected_model, raw_title=raw_title, return_title=True, user_note=effective_note)
         if isinstance(summarize_result, tuple) and len(summarize_result) == 2:
             summary, ai_title = summarize_result
         else:
@@ -206,6 +232,10 @@ async def api_summarize(request: SummarizeRequest, token: str = Depends(verify_t
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=summary,
             )
+
+        note_block = format_user_note_block(effective_note)
+        if note_block:
+            summary = f"{note_block}\n\n---\n\n{summary}"
 
         title = resolve_final_title(ai_title, raw_title, language, "Text Summary")
 

@@ -1,9 +1,253 @@
 """Content classification and extraction helpers."""
 
+import html
 import ipaddress
+import os
 import re
 import socket
+import unicodedata
 import urllib.parse
+
+
+DEFAULT_AUTHOR_NOTE_LABEL = "[ DAVID888 筆記／觀點備註 ]"
+
+_CJK_AND_FULLWIDTH = r"\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\uff00-\uffef\u3000-\u303f"
+_URL_PREFIX_BOUNDARY = rf"(?:^|(?<=[\s(\[{{<\"',;:!?{_CJK_AND_FULLWIDTH}]))"
+_URL_IN_TEXT_RE = re.compile(
+    rf"{_URL_PREFIX_BOUNDARY}(?:https?://|www\.)[^\s、，。：；！？「」『』【】（）《》〈〉<>\"{_CJK_AND_FULLWIDTH}]+",
+    re.IGNORECASE,
+)
+_TRAILING_URL_PUNCT = frozenset("、，。：；！？\"'」』】）>,.;!?")
+_OUTER_WRAPPER_PAIRS = (
+    ("(", ")"),
+    ("（", "）"),
+    ("[", "]"),
+    ("【", "】"),
+    ("「", "」"),
+    ("『", "』"),
+    ("<", ">"),
+    ('"', '"'),
+    ("'", "'"),
+)
+_PURE_SUMMARY_COMMANDS = {
+    "總結",
+    "摘要",
+    "幫我總結",
+    "請總結",
+    "幫我摘要",
+    "請摘要",
+    "summarize",
+    "summary",
+    "tldr",
+    "tl;dr",
+}
+_PROMPT_BOUNDARY_RE = re.compile(
+    r"-{3,}\s*((?:BEGIN|END)\s+(?:USER\s+NOTE|SOURCE\s+CONTENT))\s*-{3,}",
+    re.IGNORECASE,
+)
+
+
+def get_author_note_label() -> str:
+    """Return sanitized author note label or default `[ DAVID888 筆記／觀點備註 ]`."""
+    return sanitize_raw_title(os.environ.get("AUTHOR_NOTE_LABEL", ""), max_length=60) or DEFAULT_AUTHOR_NOTE_LABEL
+
+
+def escape_prompt_boundaries(text: str) -> str:
+    """Neutralize forged prompt demarcation markers inside untrusted user notes or source content."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    return _PROMPT_BOUNDARY_RE.sub(lambda m: f"－－－ {m.group(1)} －－－", text)
+
+
+def _clean_matched_url(raw_url: str) -> str:
+    """Linearly strip trailing punctuation glued to a URL while preserving balanced parens/brackets."""
+    if not raw_url:
+        return ""
+    open_paren = raw_url.count("(")
+    close_paren = raw_url.count(")")
+    open_bracket = raw_url.count("[")
+    close_bracket = raw_url.count("]")
+
+    end = len(raw_url)
+    while end > 0:
+        ch = raw_url[end - 1]
+        if ch in _TRAILING_URL_PUNCT:
+            end -= 1
+            continue
+        if ch == ")" and close_paren > open_paren:
+            close_paren -= 1
+            end -= 1
+            continue
+        if ch == "]" and close_bracket > open_bracket:
+            close_bracket -= 1
+            end -= 1
+            continue
+        break
+
+    cleaned = raw_url[:end]
+    if len(cleaned) > 2048:
+        return ""
+    return cleaned
+
+
+def _normalize_extracted_url(raw_clean_url: str) -> str | None:
+    """Ensure http/https scheme, lowercase scheme/host via urlsplit, and validate hostname."""
+    if not raw_clean_url:
+        return None
+    candidate = f"https://{raw_clean_url}" if raw_clean_url.lower().startswith("www.") else raw_clean_url
+    try:
+        parsed = urllib.parse.urlsplit(candidate)
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
+            return None
+        hostname = parsed.hostname
+        if not hostname:
+            return None
+        hostname_lower = hostname.lower()
+        if hostname_lower in ("www", "www."):
+            return None
+        port = parsed.port  # Validates numeric port range (0-65535)
+    except ValueError:
+        return None
+
+    host_part = f"[{hostname_lower}]" if ":" in hostname_lower and not hostname_lower.startswith("[") else hostname_lower
+    host_port = f"{host_part}:{port}" if port is not None else host_part
+    if parsed.username is not None:
+        auth = f"{parsed.username}:{parsed.password}@" if parsed.password is not None else f"{parsed.username}@"
+        netloc = f"{auth}{host_port}"
+    else:
+        netloc = host_port
+
+    return urllib.parse.urlunsplit((scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def _trim_connector_edges(before: str, after: str) -> str:
+    """Join remaining text around the removed URL in O(n), stripping outer wrappers and inline connectors."""
+    b = before
+    a = after
+
+    # Strip matched outer wrapper pairs (e.g. "(https://...)" or "「https://...」")
+    changed = True
+    while changed:
+        changed = False
+        b_r = b.rstrip(" \t")
+        a_l = a.lstrip(" \t")
+        for open_ch, close_ch in _OUTER_WRAPPER_PAIRS:
+            if b_r.endswith(open_ch) and a_l.startswith(close_ch):
+                b = b_r[:-1]
+                a = a_l[1:]
+                changed = True
+                break
+
+    # Trim trailing inline connectors (: ： -) on the same line right before the URL
+    if b and not b.endswith(("\n", "\r")):
+        b = b.rstrip(" \t")
+        while b:
+            if b[-1] in (":", "："):
+                b = b[:-1].rstrip(" \t")
+            elif b[-1] in ("-", "–", "—") and (len(b) == 1 or b[-2].isspace()):
+                b = b[:-1].rstrip(" \t")
+            else:
+                break
+
+    # Trim leading inline connectors (: ： , ， 、 。 . -) on the same line right after the URL (preserve newline bullets)
+    if a and not a.startswith(("\n", "\r")):
+        a = a.lstrip(" \t")
+        while a:
+            if a[0] in (":", "：", ",", "，", "、", "。", "."):
+                a = a[1:].lstrip(" \t")
+            elif a[0] in ("-", "–", "—") and (len(a) == 1 or a[1].isspace()):
+                a = a[1:].lstrip(" \t")
+            else:
+                break
+
+    if b and a:
+        if b[-1].isspace() or a[0].isspace():
+            joined = b + a
+        else:
+            joined = b + " " + a
+    else:
+        joined = b + a
+
+    cleaned = joined.strip()
+    while cleaned and cleaned[0] in (":", "：") and (len(cleaned) == 1 or cleaned[1].isspace()):
+        cleaned = cleaned[1:].lstrip()
+    while cleaned and cleaned[-1] in (":", "：") and (len(cleaned) == 1 or cleaned[-2].isspace()):
+        cleaned = cleaned[:-1].rstrip()
+
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
+def _is_pure_punctuation_or_whitespace(text: str) -> bool:
+    """Return True if text contains only punctuation or whitespace characters."""
+    return all(unicodedata.category(ch).startswith(("P", "Z")) or ch.isspace() for ch in text)
+
+
+def parse_url_and_user_note(text: str, max_note_chars: int = 4000) -> tuple[str | None, str | None]:
+    """Extract the first URL and optional user commentary/note from a Telegram or API message.
+
+    Returns (clean_url, user_note). Returns (None, None) if no valid URL exists or if the message
+    appears to be a long article (> 600 remaining chars) that merely embeds a link mid-text.
+    """
+    if not text or not isinstance(text, str):
+        return None, None
+
+    match = _URL_IN_TEXT_RE.search(text)
+    if not match:
+        return None, None
+
+    # Early O(1)/O(prefix) guard to avoid scanning/cleaning 1MB long texts that embed a link mid-body
+    url_at_start = match.start() == 0 or text[: match.start()].isspace()
+    if not url_at_start and (len(text) - (match.end() - match.start())) > 600:
+        return None, None
+
+    raw_clean_url = _clean_matched_url(match.group(0))
+    normalized_url = _normalize_extracted_url(raw_clean_url)
+    if not normalized_url:
+        return None, None
+
+    raw_clean_end = match.start() + len(raw_clean_url)
+    remaining = _trim_connector_edges(text[: match.start()], text[raw_clean_end:])
+
+    if not url_at_start and len(remaining) > 600:
+        return None, None
+
+    if not remaining or _is_pure_punctuation_or_whitespace(remaining) or remaining.lower() in _PURE_SUMMARY_COMMANDS:
+        user_note = None
+    else:
+        user_note = remaining[:max_note_chars].strip() or None
+
+    return normalized_url, user_note
+
+
+def format_user_note_block(
+    user_note: str | None,
+    note_label: str | None = None,
+    escape_markdown_structure: bool = True,
+) -> str:
+    """Format user commentary/note into a prominent, sanitized Markdown blockquote header block."""
+    if not user_note or not isinstance(user_note, str) or not user_note.strip():
+        return ""
+    label = sanitize_raw_title(note_label, max_length=60) if note_label else get_author_note_label()
+    if not label:
+        label = DEFAULT_AUTHOR_NOTE_LABEL
+    clean_note = re.sub(r"\n{3,}", "\n\n", user_note.strip())
+    if not escape_markdown_structure:
+        return f"### 📝 {label}\n{clean_note}"
+
+    formatted_lines: list[str] = []
+    for raw_line in clean_note.splitlines():
+        escaped_line = html.escape(raw_line, quote=False)
+        stripped = escaped_line.lstrip()
+        if re.match(r"^#{1,6}\s+", stripped):
+            escaped_line = re.sub(r"^#{1,6}\s+", "#### ", stripped)
+        elif re.match(r"^#{1,6}$", stripped):
+            escaped_line = "\\" + stripped
+        elif re.match(r"^(?:-{3,}|={3,})$", stripped):
+            escaped_line = "\\" + stripped
+        formatted_lines.append(f"> {escaped_line}" if escaped_line else ">")
+
+    return f"### 📝 {label}\n" + "\n".join(formatted_lines)
 
 
 def split_user_input(text: str) -> list[str]:
@@ -11,7 +255,9 @@ def split_user_input(text: str) -> list[str]:
 
 
 def is_url(text: str) -> bool:
-    return bool(re.compile(r"https?://\S+|www\.\S+").match(text))
+    if not text or not isinstance(text, str):
+        return False
+    return bool(re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE).match(text))
 
 
 def is_safe_url(url: str) -> bool:
@@ -349,7 +595,7 @@ def is_conversation_followup(text: str, history: dict | None) -> bool:
     if not history or not history.get("summary"):
         return False
     t = text.strip().lower()
-    if is_url(t) or is_explicit_summary_request(t) or is_wiki_or_report_request(t):
+    if is_url(t) or parse_url_and_user_note(text)[0] or is_explicit_summary_request(t) or is_wiki_or_report_request(t):
         return False
     # If the text explicitly starts with creative/generation commands, it's not a followup to the old summary
     if any(t.startswith(k) for k in ("寫", "幫我寫", "請寫", "製作", "生成", "translate", "write", "create")):
@@ -620,13 +866,17 @@ def compose_summary_with_source(
     summary: str,
     original_url: str | None = None,
     raw_title: str | None = None,
+    user_note: str | None = None,
 ) -> str:
-    """Format the final summary message with sanitized SEO title and optional raw title / source URL footer."""
+    """Format the final summary message with sanitized SEO title, optional user note block, and source URL footer."""
     clean_title = sanitize_raw_title(title)
     clean_raw_title = sanitize_raw_title(raw_title)
     show_raw_title = is_valid_raw_title(clean_raw_title) and clean_raw_title != clean_title
 
-    parts = [f"📌 {clean_title}\n\n{summary}"]
+    note_block = format_user_note_block(user_note)
+    body = f"{note_block}\n\n---\n\n{summary}" if note_block else summary
+
+    parts = [f"📌 {clean_title}\n\n{body}"]
     footer_lines = []
     if show_raw_title:
         footer_lines.append(f"🏷️ 原始標題：{clean_raw_title}")
@@ -643,8 +893,9 @@ def prepare_wiki_content(
     summary: str,
     original_url: str | None = None,
     raw_title: str | None = None,
+    user_note: str | None = None,
 ) -> str:
-    """Build Wiki Markdown starting with a unique H1 title, demoting body H1s, and appending source metadata."""
+    """Build Wiki Markdown starting with a unique H1 title, optional user note block, demoting body H1s, and appending source metadata."""
     clean_title = sanitize_raw_title(title) or "AI 內容深度解析"
     body = (summary or "").strip()
     if body.endswith(_SUMMARY_BOT_TAGLINE):
@@ -654,6 +905,9 @@ def prepare_wiki_content(
         body = re.sub(r"(?m)^#\s+", "## ", body)
 
     sections = [f"# {clean_title}"]
+    note_block = format_user_note_block(user_note)
+    if note_block:
+        sections.append(f"{note_block}\n\n---" if body else note_block)
     if body:
         sections.append(body)
 

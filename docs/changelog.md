@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-11-19] - URL User Note (`[ DAVID888 筆記／觀點備註 ]`) & LLM Dedicated Response Section
+
+### ✨ Added & Hardened
+- **📝 URL 附帶個人筆記／觀點備註解析與結構安全淨化 (`app/services/content.py`)**:
+  - 新增 `DEFAULT_AUTHOR_NOTE_LABEL`（`[ DAVID888 筆記／觀點備註 ]`）與 `get_author_note_label()`（支援透過環境變數 `AUTHOR_NOTE_LABEL` 自訂標題並經 `sanitize_raw_title(..., max_length=60)` 淨化控制字元與換行）。
+  - 新增純線性 O(n) `parse_url_and_user_note(text, max_note_chars=4000)`：智慧拆解「URL + 個人觀點／筆記／疑問」（支援 URL 在前或觀點在後，包含緊貼中文文字與大寫 `HTTPS://`／`WWW.` scheme/host 正規化），採單次索引修剪尾端標點與外層對稱括號/引號（無 ReDoS / O(n²) 回溯，保護 Wikipedia 括號網址與 IPv6 `[::1]`、加上 token 前界排除 Email/`file:///www.`/`javascript:`），保留「讚」「推」等單字有效筆記，並提前執行長文長度守衛（URL 非位於開頭且剩餘字元 `> 600` 時直接回傳 `(None, None)`）。
+  - 新增 `format_user_note_block(user_note, note_label=None, escape_markdown_structure=True)`（將原話以 `> ` blockquote 呈現、跳脫 `<`/`>` HTML 標籤字元並降級/跳脫 `#` 標題與 `---`/`===` 分隔線，確保 Wiki 永遠維持唯一首行 H1 且 Email/Telegram 無裸 HTML 注入）與 `escape_prompt_boundaries()`（中和偽造的 `--- BEGIN/END USER NOTE / SOURCE CONTENT ---` 邊界標記）；同步更新 `compose_summary_with_source()`、`prepare_wiki_content()` 與 `is_conversation_followup()`。
+- **🤖 LLM 專屬回應段落、SSRF 前置守衛與全流程整合 (`app/legacy.py`, `main.py`, `app/services/quick_reply.py`)**:
+  - `summarize()` 新增 `user_note=None` 參數並套用 `escape_prompt_boundaries()` 隔離筆記與來源文本，要求 LLM 於 `TITLE:` 後、`### ⓵` 前生成 `### 💬 【針對筆記與疑問回應】`（英文版 `### 💬 【Response to Your Note & Questions】`）。
+  - `process_user_input()` 與 `is_url()` 統一支援大小寫不敏感 `https?://`，並於所有媒體探測（Pocket Casts / SoundOn / Apple Podcast / `yt-dlp` / 網頁抓取）**之前**強制執行 SSRF `is_safe_url()` 驗證。
+  - Clef 廣告強制查看 (`show_ad:`) 改為每次提交獨立產生 `uuid` token（避免同 URL 不同筆記互相覆蓋），`build_quick_reply_source()` 將使用者筆記配額限制於 `min(600, max_chars // 4)`（標題改為 `使用者筆記與觀點：`）並套用 `escape_prompt_boundaries()`，同步整合 3 處 David888 Wiki 發布、MongoDB `summary_data` 與 `/help`。
+- **🌐 FastAPI `/api/v1/summarize` 支援 `user_note` 與非同步邊界 (`app/api.py`, `api.py`)**:
+  - `SummarizeRequest` 新增選用欄位 `user_note`（`max_length=4000`），`api_summarize` 透過 `await run_blocking(parse_url_and_user_note, user_input)` 拆出內聯筆記，並以 4000 字元總預算合併顯式 `user_note`（優先保留顯式筆記最多 3000 字＋內聯筆記剩餘預算），於回傳 `summary` 最上方附加淨化後的 `format_user_note_block()`。
+- **🧪 新增完整效能、安全性與功能回歸測試 (`tests/test_content.py`, `tests/test_quick_reply.py`, `tests/test_api_keys.py`, `tests/test_security_audit.py`, `example.env`)**:
+  - 覆蓋 4096 空白與 50,000 個 `)` ReDoS 防護（< 0.2s）、緊貼中文 URL、大寫 scheme/host、IPv6、單字筆記、Wiki/HTML/HR 結構淨化、Prompt 邊界防偽、Quick Reply 配額保護、Telegram/API 觀點+內網 URL 前置 SSRF 阻斷，以及顯式+內聯 `user_note` 合併規則。
+
 ## [2026-11-19] - Telegram /apikey Single-Key Management & Python 3.14 Upgrade
 
 ### ✨ Added

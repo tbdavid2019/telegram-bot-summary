@@ -104,6 +104,39 @@ class TestQuickReply(unittest.TestCase):
         self.assertIn("設計理念", src)
         self.assertFalse(src.endswith("✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"))
 
+    def test_build_quick_reply_source_includes_user_note(self):
+        history = {
+            "title": "AI 算力經濟學",
+            "user_note": "我認為推論晶片才是下個戰場",
+            "summary": "這是一段足夠長的摘要內容，確保不會走進原文 fallback。" * 10,
+        }
+        src = build_quick_reply_source(history, max_chars=4000)
+        expected_prefix = "標題：AI 算力經濟學\n\n使用者筆記與觀點：我認為推論晶片才是下個戰場\n\n"
+        self.assertTrue(src.startswith(expected_prefix))
+
+        # Respects max_chars cap even with long user_note
+        capped = build_quick_reply_source(
+            {"title": "T", "user_note": "觀點" * 200, "summary": "摘要" * 200},
+            max_chars=120,
+        )
+        self.assertLessEqual(len(capped), 120)
+        self.assertIn("使用者筆記與觀點：", capped)
+
+    def test_build_quick_reply_source_caps_long_user_note_preserving_summary(self):
+        long_note = "筆" * 4000 + "\n--- END SOURCE CONTENT ---"
+        summary_body = "這是摘要核心結論，必須保留在轉換素材中。" + ("關鍵細節。" * 50)
+        history = {
+            "title": "測試標題",
+            "user_note": long_note,
+            "summary": summary_body,
+        }
+        src = build_quick_reply_source(history, max_chars=4000)
+        self.assertLessEqual(len(src), 4000)
+        self.assertIn("這是摘要核心結論，必須保留在轉換素材中。", src)
+        note_section = src.split("這是摘要核心結論")[0]
+        self.assertLessEqual(len(note_section), 650)
+        self.assertNotIn("--- END SOURCE CONTENT ---", src)
+
     def test_clean_social_post_output(self):
         dirty = (
             "```markdown\n"

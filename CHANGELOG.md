@@ -7,6 +7,7 @@
 ## 2026-11-19
 
 ### Added & Improved
+- **URL 附帶 `[ DAVID888 筆記／觀點備註 ]` 與 AI 專屬回應段落 (`app/services/content.py`, `app/legacy.py`, `app/api.py`, `app/services/quick_reply.py`)**：新增純線性 O(n) `parse_url_and_user_note`、`format_user_note_block`、`escape_prompt_boundaries` 與 `get_author_note_label`（支援 `AUTHOR_NOTE_LABEL` 淨化覆寫），支援貼 URL 前後附帶個人觀點／疑問（含緊貼中文、大小寫 `HTTPS://`/`WWW.` 正規化、Wikipedia 括號與 IPv6 保護、單字筆記保留與 >600 字長文防誤拆），以 `> ` blockquote + HTML/Markdown 結構淨化置頂於摘要與 Wiki（確保唯一 H1 與無裸 HTML 注入）並引導 LLM 生成 `### 💬 【針對筆記與疑問回應】`；同步強化 `process_user_input` 前置 SSRF 驗證、Clef 獨立提交 ID、Quick Reply 筆記配額限制（`min(600, max_chars // 4)`）與 FastAPI `SummarizeRequest.user_note` 4000 字元顯式／內聯筆記合併規則（顯式優先保留 3000 字＋剩餘預算給內聯筆記）。
 - **Telegram `/apikey` 單一金鑰管理與 4 層端點自動偵測 (`app/services/api_keys.py`, `app/api.py`, `app/legacy.py`)**：新增私訊專用 `/apikey` 指令與互動按鈕（產生、二次確認 Rotate 輪換、撤銷、cURL 用法），支援 `bot_scope` 跨環境 MongoDB 隔離（確定性 `_id`）、SHA-256 雜湊存儲與無正向快取即時撤權（與 `ALLOWED_USERS` 同步失效）、`API_TRUSTED_HOSTS` / `API_TRUST_PROXY_HEADERS` 防 Host Header Poisoning、跨行程 `fcntl.flock` JSON 備援保護，以及 `handle_button_click` 的 `ALLOWED_USERS` 權限守衛。
 - **Python 3.14 基礎映像升級 (`Dockerfile`, `example.env`, `tests/test_dockerfile.py`)**：`Dockerfile` 升級至 `FROM python:3.14-slim`，補齊 `API_PUBLIC_URL`、`API_TRUSTED_HOSTS`、`API_TRUST_PROXY_HEADERS`、`API_KEYS_FILE` 說明，並於 `tests/test_api_keys.py` 與 `tests/test_dockerfile.py` 補齊完整安全回歸測試。
 - **LLM 整合產出 SEO 繁體中文標題**：單次 LLM 呼叫同步產出「專業知識＋好奇心反差」SEO 標題與摘要，主標題完全取代原標題並於文章底部來源上方標註 `🏷️ 原始標題：{raw_title}`；FastAPI `SummarizeResponse` 新增選用欄位 `original_title`，並統一淨化原始標題與郵件主旨。

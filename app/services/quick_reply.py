@@ -2,6 +2,8 @@
 
 import re
 import urllib.parse
+
+from app.services.content import escape_prompt_boundaries
 try:
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 except ImportError:
@@ -76,14 +78,21 @@ def build_quick_reply_source(history: dict, max_chars: int = 4000) -> str:
         return ""
 
     title = (history.get("title") or "").strip()
+    user_note = history.get("user_note")
+    note = user_note.strip() if isinstance(user_note, str) else ""
+    note_budget = min(600, max_chars // 4)
     summary = (history.get("summary") or "").strip()
     if summary.endswith(_SUMMARY_BOT_TAGLINE):
         summary = summary[: -len(_SUMMARY_BOT_TAGLINE)].rstrip()
 
+    parts = []
+    if title:
+        parts.append(f"標題：{title}")
+    if note and note_budget > 0:
+        parts.append(f"使用者筆記與觀點：{note[:note_budget]}")
     if summary:
-        source = f"標題：{title}\n\n{summary}" if title else summary
-    else:
-        source = f"標題：{title}" if title else ""
+        parts.append(summary)
+    source = "\n\n".join(parts)
 
     if len(summary) < 200:
         original_items = history.get("original_content") or []
@@ -116,7 +125,7 @@ def build_quick_reply_source(history: dict, max_chars: int = 4000) -> str:
             if original_text:
                 source = f"{source}{header}{original_text}" if source else original_text
 
-    return source[:max_chars]
+    return escape_prompt_boundaries(source)[:max_chars]
 
 
 def _truncate_cleanly(text: str, max_chars: int) -> str:

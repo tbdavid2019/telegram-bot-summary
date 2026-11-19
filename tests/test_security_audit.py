@@ -102,6 +102,37 @@ class SecurityAuditTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn("Invalid, blocked, or prohibited", res.json()["detail"])
 
+        # Block SSRF request even when prefixed with user commentary/note
+        res_with_note = client.post(
+            "/api/v1/summarize",
+            json={"input": "觀點 http://169.254.169.254/latest/meta-data"},
+            headers={"Authorization": f"Bearer {sample_token}"}
+        )
+        self.assertEqual(res_with_note.status_code, 400)
+        self.assertIn("Invalid, blocked, or prohibited", res_with_note.json()["detail"])
+
+    def test_process_user_input_blocks_ssrf_before_media_probing(self):
+        import app.legacy as legacy
+
+        with (
+            patch.object(legacy, "is_pocketcasts_url") as mock_pc,
+            patch.object(legacy, "is_supported_by_ytdlp") as mock_ytdlp,
+            patch.object(legacy, "scrape_text_from_url") as mock_scrape,
+        ):
+            res = legacy.process_user_input("http://169.254.169.254/latest/meta-data")
+            self.assertIsInstance(res, tuple)
+            self.assertEqual(res[0], [])
+            self.assertIn("Blocked private or invalid URL", res[1])
+
+            res_upper = legacy.process_user_input("HTTP://127.0.0.1/admin")
+            self.assertIsInstance(res_upper, tuple)
+            self.assertEqual(res_upper[0], [])
+            self.assertIn("Blocked private or invalid URL", res_upper[1])
+
+            mock_pc.assert_not_called()
+            mock_ytdlp.assert_not_called()
+            mock_scrape.assert_not_called()
+
     def test_prompt_injection_demarcation_in_summarization(self):
         with patch("app.services.summarization.call_gpt_api") as mock_gpt:
             mock_gpt.return_value = "Protected Summary"

@@ -227,6 +227,7 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 
 ## 核心與新增功能
 
+- **📝 網址附帶 `[ DAVID888 筆記／觀點備註 ]` 與 AI 專屬回應段落 (`app/services/content.py`, `app/legacy.py`, `app/api.py`)**：在 Telegram 貼上網址時（支援 URL 在前或觀點在前，包含緊貼中文如 `https://example.com這篇不錯`），可直接附帶個人筆記、評論或疑問；系統透過線性 O(n) `parse_url_and_user_note` 智慧拆出乾淨 URL 與備註（含 `http`/`https` 大小寫與主機名稱正規化、Wikipedia 括號與 IPv6 網址保護、單字筆記如「讚／推」保留，以及**長文保護**：當 URL 非位於開頭且剩餘字元 `> 600` 時視為長文中夾帶連結不誤拆），將經 Markdown/HTML 淨化與引用隔離的 `### 📝 [ DAVID888 筆記／觀點備註 ]`（支援 `AUTHOR_NOTE_LABEL` 自訂標題）置於摘要最上方，並引導 LLM 於結構化摘要前段生成 `### 💬 【針對筆記與疑問回應】`（英文版為 `### 💬 【Response to Your Note & Questions】`）專段直接回應；同步支援 David888 Wiki 發布、Quick Reply 風格轉換（筆記配額上限 `min(600, max_chars // 4)` 保護摘要主體）、Clef 強制查看與 FastAPI `user_note` 欄位。
 - **🔑 Telegram `/apikey` 單一金鑰管理與 4 層端點自動偵測 (`app/services/api_keys.py`)**：支援私訊使用 `/apikey` 自助產生個人 `oli_...` Bearer Token，每位 `(bot_scope, telegram_id)` 用戶嚴格限制僅保留 **1 把有效金鑰**（僅於建立/輪換當下顯示一次明文，後端採 SHA-256 雜湊與常數時間 `hmac.compare_digest` 比對，絕不落盤明文）。支援 `bot_scope` 跨環境隔離（共用同一個 MongoDB 時 `@oli_summary_bot` 與 `@quantaar_bot` 金鑰互不干擾）、即時授權驗證（無正向快取，Rotate 輪換與撤銷零延遲 401 失效；自 `ALLOWED_USERS` 移除成員亦即時失效）、以及 **4 層智慧 API Base URL 偵測**（`API_PUBLIC_URL` $\rightarrow$ 僅於設定 `API_TRUSTED_HOSTS` 且經認證請求才記錄之受信任外部 Host $\rightarrow$ 公網 IP + `API_PORT` $\rightarrow$ `localhost:API_PORT`）與即貼即用的 cURL 教學。
 - **🛡️ Clef-Flash System One 決策模型廣告與垃圾訊息智慧過濾**：整合自建 Clef-Flash 決策推論引擎（極速推論 <200ms、免外部 Token 費用），採用雙節點高可用容錯（Primary: `https://clef.create360.ai/v1/systemone` | Fallback: `https://clef.aiurl.tw/v1/systemone`），預設開啟並設定 30 秒逾時保護。若判定為廣告行銷訊息將直接隱藏輸出，並附帶 `[👁️ 仍要查看摘要]` 按鈕供用戶隨時強制查看；支援三層式快取架構（Memory $\rightarrow$ MongoDB $\rightarrow$ Disk），後續用戶讀取相同內容無需重複推論；雙節點皆異常時自動平滑降級放行，確保系統 100% 穩定可用。
 - **🎙️ Pocket Casts 與 pca.st 短網址深度整合**：原生支援 Pocket Casts (`pocketcasts.com`, `play.pocketcasts.com`) 與官方短網址 (`pca.st`)，自動解析單集 UUID 並透過 Pocket Casts API 直接鎖定單集音訊與真實標題，無懼 CloudFront/AWS WAF 挑戰，經由 Whisper 轉錄輸出高精確逐字稿與重點摘要。
@@ -399,10 +400,11 @@ chmod +x setup_chrome_container.sh
 ### 💡 使用技巧
 
 1. **直接發送內容**: 文字、網址、各類文件檔案（PDF、Word、Excel、PPT、EPUB、CSV、TXT）或直接傳送錄音/音訊檔（MP3、M4A、WAV、OGG、AAC 等），機器人會透過 Google Magika 自動識別內容類型，分流至 Whisper 逐字稿轉錄或 AnyDoc 文檔摘要，無需手動指定格式。
-2. **續問功能**: 完成摘要後，直接發送問題即可續問
-3. **語言切換**: 使用 `/lang` 切換語言後，之後的摘要都使用新語言
-4. **多輪對話**: 系統自動保留最近 3 輪對話，支援深入討論
-5. **新對話**: 發送新 URL 或 `/clear` 開始新的摘要
+2. **網址附帶個人筆記／觀點**: 貼上 URL 時可在前後附上個人評論、筆記或疑問，Bot 會將 `[ DAVID888 筆記／觀點備註 ]` 置於摘要最上方並由 AI 專段直接回應。
+3. **續問功能**: 完成摘要後，直接發送問題即可續問
+4. **語言切換**: 使用 `/lang` 切換語言後，之後的摘要都使用新語言
+5. **多輪對話**: 系統自動保留最近 3 輪對話，支援深入討論
+6. **新對話**: 發送新 URL 或 `/clear` 開始新的摘要
 
 ### Docker 設置指南
 
@@ -509,6 +511,7 @@ docker run -d \
 | `USE_AUDIO_FALLBACK`  | 是否啟用無字幕影片處理功能，`1` 表示啟用，`0` 表示禁用           |
 | `ALLOWED_USERS`       | 允許使用機器人的用戶 ID 列表，用逗號分隔                          |
 | `SHOW_PROCESSING`     | 是否顯示處理中訊息，`1` 表示啟用，`0` 表示禁用                   |
+| `AUTHOR_NOTE_LABEL`   | 選用；自訂網址附帶筆記區塊標題（預設：`[ DAVID888 筆記／觀點備註 ]`） |
 
 ### SMTP Variables
 
@@ -641,9 +644,13 @@ API_PORT=8001
     ```json
     {
       "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      "language": "zh-TW"
+      "language": "zh-TW",
+      "user_note": "選用（上限 4000 字元）：附上想讓 AI 直接回應的個人觀點、筆記或疑問"
     }
     ```
+  * **`user_note` 合併與長文保護規則**：
+    * 支援在 `input` 內聯「URL + 觀點」（支援 URL 在前或觀點在後）；若 URL **非位於開頭**且剩餘文字長度 `> 600` 字元，視為長文中夾帶連結而不拆出 `user_note`。
+    * 若同時提供顯式 `user_note` 與 `input` 內聯筆記且兩者不同：總長度上限為 `4000` 字元；合計超過 `4000` 時，優先保留顯式 `user_note` 最多 `3000` 字元（若顯式筆記較短則保留全文），再將剩餘預算分配給內聯筆記（以 `\n\n` 串接）。
   * **Response (JSON)**:
     ```json
     {

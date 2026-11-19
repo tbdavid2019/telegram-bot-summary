@@ -525,6 +525,66 @@ class APIKeysServiceTests(unittest.TestCase):
             asyncio.run(app_api.verify_token(fake_request, creds))
         self.assertEqual(401, ctx.exception.status_code)
 
+    def test_fastapi_summarize_with_explicit_and_inline_user_note(self):
+        static_token = next(iter(valid_tokens))
+        client = TestClient(fastapi_app)
+        with (
+            patch("app.api.run_blocking", side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)),
+            patch("app.services.decision.is_decision_ad_filter_enabled", return_value=False),
+            patch.dict("sys.modules", {"app.legacy": MagicMock()}),
+        ):
+            mock_legacy = sys.modules["app.legacy"]
+            mock_legacy.process_user_input.return_value = ["Article body"]
+            mock_legacy.get_web_title.return_value = "Original Web Title"
+            mock_legacy.summarize.return_value = ("### 💬 【針對筆記與疑問回應】\nAI 回應\n\n---\n\n### ⓵ 【容易懂 Easy Know】\n摘要", "SEO 標題")
+
+            # 1. Explicit user_note field
+            res1 = client.post(
+                "/api/v1/summarize",
+                json={"input": "https://example.com/post", "user_note": "這段論點太樂觀了"},
+                headers={"Authorization": f"Bearer {static_token}"},
+            )
+            self.assertEqual(200, res1.status_code)
+            data1 = res1.json()
+            self.assertEqual("https://example.com/post", data1["original_url"])
+            self.assertTrue(data1["summary"].startswith("### 📝 [ DAVID888 筆記／觀點備註 ]\n> 這段論點太樂觀了\n\n---\n\n### 💬 【針對筆記與疑問回應】"))
+            self.assertEqual("這段論點太樂觀了", mock_legacy.summarize.call_args.kwargs["user_note"])
+
+            # 2. Inline URL + note in input
+            mock_legacy.reset_mock()
+            mock_legacy.process_user_input.return_value = ["Article body"]
+            mock_legacy.get_web_title.return_value = "Original Web Title"
+            mock_legacy.summarize.return_value = ("### 💬 【針對筆記與疑問回應】\nAI 回應", "SEO 標題")
+            res2 = client.post(
+                "/api/v1/summarize",
+                json={"input": "我很好奇他們的獲利模式：https://example.com/biz"},
+                headers={"Authorization": f"Bearer {static_token}"},
+            )
+            self.assertEqual(200, res2.status_code)
+            data2 = res2.json()
+            mock_legacy.process_user_input.assert_called_once_with("https://example.com/biz")
+            self.assertEqual("https://example.com/biz", data2["original_url"])
+            self.assertTrue(data2["summary"].startswith("### 📝 [ DAVID888 筆記／觀點備註 ]\n> 我很好奇他們的獲利模式\n\n---\n\n"))
+            self.assertEqual("我很好奇他們的獲利模式", mock_legacy.summarize.call_args.kwargs["user_note"])
+
+            # 3. Both explicit user_note (>3000) and inline note (>1500) -> merged within 4000 keeping both
+            mock_legacy.reset_mock()
+            mock_legacy.process_user_input.return_value = ["Article body"]
+            mock_legacy.get_web_title.return_value = "Original Web Title"
+            mock_legacy.summarize.return_value = ("### 💬 【針對筆記與疑問回應】\nAI 回應", "SEO 標題")
+            explicit_long = "顯" * 3500
+            inline_long = "內" * 1500
+            res3 = client.post(
+                "/api/v1/summarize",
+                json={"input": f"https://example.com/both\n{inline_long}", "user_note": explicit_long},
+                headers={"Authorization": f"Bearer {static_token}"},
+            )
+            self.assertEqual(200, res3.status_code)
+            merged_note = mock_legacy.summarize.call_args.kwargs["user_note"]
+            self.assertLessEqual(len(merged_note), 4000)
+            self.assertIn("顯" * 3000, merged_note)
+            self.assertIn("內" * 900, merged_note)
+
 
 class TelegramApiKeyCommandTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
