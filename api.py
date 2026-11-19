@@ -6,6 +6,12 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from runtime import run_blocking
+from app.services.api_keys import (
+    is_candidate_dynamic_api_key,
+    is_proxy_headers_trusted,
+    record_observed_base_url,
+    verify_user_api_key,
+)
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)
@@ -42,15 +48,42 @@ if not valid_tokens:
         f"Generated ephemeral token: {ephemeral_token}"
     )
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    if not token or not any(secrets.compare_digest(token, valid_t) for valid_t in valid_tokens):
-        logger.warning("Unauthorized API access attempt with invalid token.")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API token."
-        )
-    return token
+def _record_trusted_request_host(request: Request) -> None:
+    if is_proxy_headers_trusted():
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
+        forwarded_host = request.headers.get("x-forwarded-host", "")
+        host = forwarded_host.split(",")[0].strip() if forwarded_host else request.headers.get("host", "")
+    else:
+        scheme = request.url.scheme
+        host = request.headers.get("host", "")
+    if scheme and host:
+        record_observed_base_url(scheme, host)
+
+async def verify_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials if credentials else ""
+    if token:
+        token_bytes = token.encode("utf-8")
+        if any(secrets.compare_digest(token_bytes, valid_t.encode("utf-8")) for valid_t in valid_tokens):
+            _record_trusted_request_host(request)
+            return token
+        if is_candidate_dynamic_api_key(token):
+            try:
+                is_valid = await run_blocking(verify_user_api_key, token)
+            except Exception as exc:
+                logger.error("API key verification failed due to backend error: %s", exc, exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="API key verification service temporarily unavailable.",
+                )
+            if is_valid:
+                _record_trusted_request_host(request)
+                return token
+    logger.warning("Unauthorized API access attempt with invalid token.")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API token."
+    )
 
 class SummarizeRequest(BaseModel):
     input: str = Field(..., description="The YouTube URL, website URL, or text to summarize.", min_length=1, max_length=1_000_000)

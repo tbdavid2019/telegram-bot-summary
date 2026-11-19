@@ -6,6 +6,7 @@ class DockerfileTests(unittest.TestCase):
     def test_copies_app_package_and_runs_package_entrypoint(self):
         dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
+        self.assertIn("FROM python:3.14-slim", dockerfile)
         self.assertIn("COPY app /app/app", dockerfile)
         self.assertIn('ENTRYPOINT ["python3", "-u", "-m", "app.main"]', dockerfile)
         self.assertIn("from magika import Magika", dockerfile)
@@ -13,3 +14,4 @@ class DockerfileTests(unittest.TestCase):
     def test_requirements_includes_magika(self):
         reqs = Path("requirements.txt").read_text(encoding="utf-8")
         self.assertIn("magika", reqs)
+        self.assertIn("audioop-lts; python_version >= '3.13'", reqs)

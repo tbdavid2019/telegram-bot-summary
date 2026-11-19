@@ -208,10 +208,26 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
        [按鈕: 🟢 開啟過濾]  [按鈕: 🔴 關閉過濾]
 ```
 
+### 場景 13: 🔑 個人 Web API Key 管理與 cURL 使用教學（限私訊）
+```
+👤 用戶: /apikey
+🤖 Bot: 🔑 【個人 Web API Key 管理】
+       目前尚未產生 API Key（每位用戶僅限 1 把有效金鑰，不保存明文）。
+       🌐 偵測 API 端點：https://summary-api.example.com（來源：環境變數 API_PUBLIC_URL）
+       [按鈕: 🔑 產生我的 API Key]  [按鈕: 📖 查看 cURL 用法]
+
+👤 用戶: [點擊 🔑 產生我的 API Key]
+🤖 Bot: 🔑 API Key 產生成功
+       ⚠️ 完整金鑰僅顯示這一次：oli_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+       📖 完整 cURL 使用教學（含 /health 與 /api/v1/summarize 範例）
+       [按鈕: 🔄 Rotate 輪換金鑰]  [按鈕: 🗑️ 撤銷金鑰]  [按鈕: 📖 查看 cURL 用法]
+```
+
 ---
 
 ## 核心與新增功能
 
+- **🔑 Telegram `/apikey` 單一金鑰管理與 4 層端點自動偵測 (`app/services/api_keys.py`)**：支援私訊使用 `/apikey` 自助產生個人 `oli_...` Bearer Token，每位 `(bot_scope, telegram_id)` 用戶嚴格限制僅保留 **1 把有效金鑰**（僅於建立/輪換當下顯示一次明文，後端採 SHA-256 雜湊與常數時間 `hmac.compare_digest` 比對，絕不落盤明文）。支援 `bot_scope` 跨環境隔離（共用同一個 MongoDB 時 `@oli_summary_bot` 與 `@quantaar_bot` 金鑰互不干擾）、即時授權驗證（無正向快取，Rotate 輪換與撤銷零延遲 401 失效；自 `ALLOWED_USERS` 移除成員亦即時失效）、以及 **4 層智慧 API Base URL 偵測**（`API_PUBLIC_URL` $\rightarrow$ 僅於設定 `API_TRUSTED_HOSTS` 且經認證請求才記錄之受信任外部 Host $\rightarrow$ 公網 IP + `API_PORT` $\rightarrow$ `localhost:API_PORT`）與即貼即用的 cURL 教學。
 - **🛡️ Clef-Flash System One 決策模型廣告與垃圾訊息智慧過濾**：整合自建 Clef-Flash 決策推論引擎（極速推論 <200ms、免外部 Token 費用），採用雙節點高可用容錯（Primary: `https://clef.create360.ai/v1/systemone` | Fallback: `https://clef.aiurl.tw/v1/systemone`），預設開啟並設定 30 秒逾時保護。若判定為廣告行銷訊息將直接隱藏輸出，並附帶 `[👁️ 仍要查看摘要]` 按鈕供用戶隨時強制查看；支援三層式快取架構（Memory $\rightarrow$ MongoDB $\rightarrow$ Disk），後續用戶讀取相同內容無需重複推論；雙節點皆異常時自動平滑降級放行，確保系統 100% 穩定可用。
 - **🎙️ Pocket Casts 與 pca.st 短網址深度整合**：原生支援 Pocket Casts (`pocketcasts.com`, `play.pocketcasts.com`) 與官方短網址 (`pca.st`)，自動解析單集 UUID 並透過 Pocket Casts API 直接鎖定單集音訊與真實標題，無懼 CloudFront/AWS WAF 挑戰，經由 Whisper 轉錄輸出高精確逐字稿與重點摘要。
 - **🎛️ 底部 Quick Reply 互動選單與無縫風格切換**：摘要下方自動附帶 6 大隨點隨轉按鈕（1分鐘極簡版、結構化大綱、核心 Q&A、社群貼文風、🎨 繪製概念圖、發布至 Wiki）；亦支援在聊天室直接以自然語言（如「轉社群風」、「給我大綱」、「畫概念圖」）自由切換！Quick Reply 優先採用濃縮後的標題與摘要作為轉換素材（不再被長逐字稿開頭截斷），其中 `1min`、`outline`、`qa` 支援 Telegram HTML 安全分片與單塊純文字降級排版，而「**📱 社群貼文風**」專為 Threads / X 打造為單篇繁中 220～320 字（< 400 字元）／英文 55–85 words（< 450 字元）、帶個人觀點與適度犀利吐槽的零 Markdown 純文字爆文，長按即可一鍵複製發布。
@@ -334,6 +350,7 @@ chmod +x setup_chrome_container.sh
 
 ## Features
 
+- **Per-User API Key Management (`/apikey`) & 4-Layer Endpoint Discovery**：支援透過私訊 `/apikey` 產生、Rotate 輪換與撤銷個人 `oli_...` Bearer Token，每位 `(bot_scope, telegram_id)` 嚴格限制僅保留 1 把金鑰；採確定性 `_id` 與 SHA-256 雜湊儲存、零正向快取即時撤銷驗證與 `ALLOWED_USERS` 同步檢查，並搭配 `API_TRUSTED_HOSTS` / `API_TRUST_PROXY_HEADERS` 防禦 Host Header Poisoning。
 - **Clef-Flash System One Intelligent Ad & Spam Filtering**：原生整合自建 Clef 決策模型（推論延遲 <200ms），具備雙節點自動容錯備援（`clef.create360.ai` 與 `clef.aiurl.tw`），預設開啟並具備 30 秒防護逾時。自動識別商業推廣、行銷文案與投資詐騙訊息並隱藏輸出，附帶記憶體、MongoDB 與本地磁碟多層快取，並提供 `/adfilter` 開關與 Telegram 隨點強制查看按鈕。
 - **Google Magika AI File Type Identification & Smart Routing**：整合 Google 開源深度學習檔案識別引擎 `Magika`（100+ 種格式，精確率 >99%），在 Docker 鏡像建構階段即將 ONNX 模型固化封裝，執行期純本地 CPU 毫秒級推論（1~5ms，零網路開銷）。智慧識別上傳內容並自動分流（音訊自動轉錄逐字稿、文檔交由 AnyDoc 轉檔、純文字直接讀取、不支援二進位檔友善阻絕）。
 - **Audio Document Transcription (Whisper ASR)**：支援直接向 Telegram 機器人傳送錄音與音訊文件（`.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac`, `.aac`, `.opus`），自動以 Groq Whisper (`whisper-large-v3`, `verbose_json`) 分塊轉錄，附帶精準時間戳記逐字稿文字檔 (`.txt`) 並產出結構化 AI 核心重點摘要。
@@ -343,7 +360,7 @@ chmod +x setup_chrome_container.sh
 - **Supports text**：處理純文本。
 - **Supports URLs**：自動擷取各類網頁文章與新聞內容（基於 `trafilatura>=2.3.1`）。
 - **Supports Documents & PDFs**：採用 Firecrawl Rust 引擎 `AnyDoc`（`firecrawl-anydoc>=0.2.4`），全面支援 PDF、Word (`.docx`)、PowerPoint (`.pptx`)、Excel (`.xlsx`)、EPUB、RTF、CSV 等文件極速轉為 Markdown 並進行 AI 摘要。
-- **Modern Telegram Bot Engine**：基於 `python-telegram-bot>=22.8`（Python 3.12+），全面支援最新 Telegram Bot API 與非同步互動體驗。
+- **Modern Telegram Bot Engine**：基於 `python-telegram-bot>=22.8`（Python 3.14+ / `python:3.14-slim`），全面支援最新 Telegram Bot API 與非同步互動體驗。
 - **Supports 1000+ Video Websites**：處理來自 YouTube、Vimeo、Bilibili、TikTok、Twitch 等 1000+ 影片網站的字幕及聽寫。
 - **Whisper API**：自動轉錄無字幕的影片與音訊，預設附帶精確時間戳 (`[MM:SS]`) 標註。
 - **Divination & Astrology**：內建塔羅牌占卜 (`/tarot`)、月老姻緣籤與生肖合婚 (`/yiyu`)。
@@ -377,6 +394,7 @@ chmod +x setup_chrome_container.sh
 | /wiki [標題/內容] | 發布至 David888 Wiki 知識庫 (產出公開好讀版與投影片) |
 | /wikiread <路徑> | 讀取 David888 Wiki 頁面內容 |
 | /adfilter | 查看或切換廣告決策過濾狀態 (預設開啟，附帶隨點強制查看按鈕) |
+| /apikey | 產生/輪換/撤銷個人 Web API Key 與查看自動偵測端點之 cURL 用法（限私訊） |
 
 ### 💡 使用技巧
 
@@ -579,6 +597,10 @@ SMTP_CC_EMAILS=cc1@gmail.com,cc2@gmail.com
 # Web API 配置 (用於 LLM / 外部系統 API 存取)
 API_AUTH_TOKENS=your_api_token_1,your_api_token_2
 API_PORT=8001
+# API_PUBLIC_URL=https://summary-api.example.com
+# API_TRUSTED_HOSTS=summary-api.example.com
+# API_TRUST_PROXY_HEADERS=false
+# API_KEYS_FILE=.cache/api_keys.json
 
 ---
 
@@ -594,6 +616,10 @@ API_PORT=8001
 | --- | --- | --- |
 | `API_AUTH_TOKENS` | API 金鑰驗證清單（多組請用逗號分隔） | `token1,token2,token3` |
 | `API_PORT` | Web API 服務監聽埠 | `8001` |
+| `API_PUBLIC_URL` | 選用；對外公開 API 基礎網址（供 `/apikey` 產生 cURL 指令，留空時自動偵測） | `https://summary-api.example.com` |
+| `API_TRUSTED_HOSTS` | 選用；逗號分隔允許觀測記錄的外部 Hostname 白名單（不含 port）；留空停用動態 Host 學習 | `summary-api.example.com` |
+| `API_TRUST_PROXY_HEADERS` | 選用；僅於信任反向代理時設為 `true` 才讀取 `X-Forwarded-Proto` / `X-Forwarded-Host` | `false` |
+| `API_KEYS_FILE` | 選用；未設定 `MONGO_URI` 時之動態 API Key 本地 JSON 儲存路徑 | `.cache/api_keys.json` |
 | `WEB_REQUEST_TIMEOUT_SECONDS` | Webhook、SMTP 等一般外部服務的最長等待秒數 | `60` |
 | `LLM_TIMEOUT_SECONDS` | 單次 LLM 摘要/問答呼叫的最長等待秒數 | `180` |
 | `ASR_TIMEOUT_SECONDS` | 每段 Whisper ASR 轉錄的最長等待秒數 | `600` |

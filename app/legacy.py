@@ -1,6 +1,7 @@
 import yt_dlp
 from pydub import AudioSegment
 import subprocess
+import html
 import json
 import os
 import shutil
@@ -90,6 +91,13 @@ from app.services.llm import (
     get_available_models,
     get_configured_endpoints,
     LLMEndpoint,
+)
+from app.services.api_keys import (
+    get_api_key_manager,
+    KeyAlreadyExistsError,
+    KeyNotFoundError,
+    resolve_api_base_url,
+    build_curl_usage_guide,
 )
 
 import smtplib
@@ -1207,6 +1215,10 @@ async def handle_adfilter(update, context):
     """查看或設定廣告決策過濾"""
     return await handle('adfilter', update, context)
 
+async def handle_apikey(update, context):
+    """產生/輪換個人 API Key 與查看 cURL 用法"""
+    return await handle('apikey', update, context)
+
 async def handle_summarize(update, context):
      return await handle('summarize', update, context)
 
@@ -1214,12 +1226,164 @@ async def handle_summarize(update, context):
 async def handle_file(update, context):
     return await handle('file', update, context)
 
+
+def _build_apikey_status_keyboard(has_key: bool) -> InlineKeyboardMarkup:
+    if not has_key:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔑 產生我的 API Key", callback_data="apikey:create")],
+            [InlineKeyboardButton("📖 查看 cURL 用法", callback_data="apikey:curl")],
+        ])
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Rotate 輪換金鑰", callback_data="apikey:rotate_confirm"),
+            InlineKeyboardButton("🗑️ 撤銷金鑰", callback_data="apikey:revoke_confirm"),
+        ],
+        [InlineKeyboardButton("📖 查看 cURL 用法", callback_data="apikey:curl")],
+    ])
+
+
+def _format_issued_apikey_html(result: dict, base_url: str, is_rotated: bool) -> str:
+    api_key_escaped = html.escape(result["api_key"])
+    curl_guide_escaped = html.escape(build_curl_usage_guide(base_url, api_key=result["api_key"]))
+    base_url_escaped = html.escape(base_url)
+    title = "🔄 <b>API Key 輪換成功（舊金鑰已立即失效）</b>" if is_rotated else "🔑 <b>API Key 產生成功</b>"
+    return (
+        f"{title}\n\n"
+        f"⚠️ <b>基於安全考量，完整金鑰僅顯示這一次，請立即妥善保存：</b>\n"
+        f"<pre><code>{api_key_escaped}</code></pre>\n\n"
+        f"🌐 <b>API 端點：</b><code>{base_url_escaped}</code>\n\n"
+        f"📖 <b>完整 cURL 使用教學（可直接複製執行）：</b>\n"
+        f"<pre><code>{curl_guide_escaped}</code></pre>"
+    )
+
+
 # async def handle_button_click(update, context):
 #     return await handle('button_click', update, context)
 async def handle_button_click(update, context):
     """處理按鈕點擊事件,包括語言切換和模型選擇"""
     query = update.callback_query
+    user_id = update.effective_user.id if update.effective_user else None
+    allowed_list = [u.strip() for u in allowed_users.split(',') if u.strip()] if allowed_users else []
+    if allowed_list and (user_id is None or str(user_id) not in allowed_list):
+        await query.answer("Sorry, you are not authorized to use this bot.", show_alert=True)
+        return
     await query.answer()
+
+    if query.data.startswith('apikey:'):
+        chat = update.effective_chat
+        if not chat or chat.type != 'private':
+            await query.edit_message_text("🔒 為避免金鑰外洩，請私訊機器人使用 /apikey 管理您的個人 API Key。")
+            return
+
+        sub_action = query.data.split(':', 1)[1]
+        manager = await run_blocking(get_api_key_manager)
+
+        if sub_action == 'create':
+            base_url, _ = await run_blocking(resolve_api_base_url)
+            try:
+                result = await run_blocking(manager.create_key, user_id)
+            except KeyAlreadyExistsError:
+                await query.edit_message_text(
+                    text=(
+                        "ℹ️ <b>您目前已有一把有效 API Key</b>\n\n"
+                        "每位用戶僅限保留 1 把有效金鑰。若需更換或遺失原金鑰，請點擊下方「🔄 Rotate 輪換金鑰」。"
+                    ),
+                    reply_markup=_build_apikey_status_keyboard(has_key=True),
+                    parse_mode='HTML',
+                )
+                return
+            await query.edit_message_text(
+                text=_format_issued_apikey_html(result, base_url, is_rotated=False),
+                reply_markup=_build_apikey_status_keyboard(has_key=True),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'rotate_confirm':
+            await query.edit_message_text(
+                text=(
+                    "⚠️ <b>確定要輪換 API Key 嗎？</b>\n\n"
+                    "輪換後<b>舊金鑰將立即失效</b>，使用舊金鑰的服務會收到 401。"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ 確認輪換", callback_data="apikey:rotate_exec"),
+                        InlineKeyboardButton("❌ 取消", callback_data="apikey:cancel"),
+                    ]
+                ]),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'rotate_exec':
+            base_url, _ = await run_blocking(resolve_api_base_url)
+            try:
+                result = await run_blocking(manager.rotate_key, user_id)
+            except KeyNotFoundError:
+                await query.edit_message_text(
+                    text=(
+                        "ℹ️ <b>目前沒有可輪換的 API Key</b>\n\n"
+                        "您的金鑰可能尚未建立或已被撤銷，請先點擊下方「🔑 產生我的 API Key」。"
+                    ),
+                    reply_markup=_build_apikey_status_keyboard(has_key=False),
+                    parse_mode='HTML',
+                )
+                return
+            await query.edit_message_text(
+                text=_format_issued_apikey_html(result, base_url, is_rotated=True),
+                reply_markup=_build_apikey_status_keyboard(has_key=True),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'revoke_confirm':
+            await query.edit_message_text(
+                text=(
+                    "⚠️ <b>確定要撤銷目前的 API Key 嗎？</b>\n\n"
+                    "撤銷後該金鑰將<b>立即失效</b>，使用此金鑰的服務會收到 401。"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ 確認撤銷", callback_data="apikey:revoke_exec"),
+                        InlineKeyboardButton("❌ 取消", callback_data="apikey:cancel"),
+                    ]
+                ]),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'revoke_exec':
+            revoked = await run_blocking(manager.revoke_key, user_id)
+            status_msg = "🗑️ <b>您的 API Key 已撤銷並立即失效。</b>" if revoked else "ℹ️ <b>目前沒有有效中的 API Key。</b>"
+            await query.edit_message_text(
+                text=f"{status_msg}\n\n若需要重新存取 Web API，可點擊下方按鈕重新產生。",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔑 產生我的 API Key", callback_data="apikey:create")]
+                ]),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'curl':
+            base_url, _ = await run_blocking(resolve_api_base_url)
+            curl_guide_escaped = html.escape(build_curl_usage_guide(base_url))
+            base_url_escaped = html.escape(base_url)
+            has_key = (await run_blocking(manager.get_key_metadata, user_id)) is not None
+            await query.edit_message_text(
+                text=(
+                    f"📖 <b>【Web API cURL 使用教學】</b>\n\n"
+                    f"🌐 <b>API 端點：</b><code>{base_url_escaped}</code>\n"
+                    f"🔑 請將範例中的 <code>&lt;YOUR_API_KEY&gt;</code> 替換為您的個人金鑰：\n"
+                    f"<pre><code>{curl_guide_escaped}</code></pre>"
+                ),
+                reply_markup=_build_apikey_status_keyboard(has_key=has_key),
+                parse_mode='HTML',
+            )
+            return
+
+        if sub_action == 'cancel':
+            await query.edit_message_text(text="已取消操作，現有 API Key 不受影響。")
+            return
     
     # 處理語言切換按鈕
     if query.data.startswith('lang_'):
@@ -1668,6 +1832,7 @@ def set_my_commands(telegram_token):
         {"command": "wiki", "description": "發布至 David888 Wiki 知識庫"},
         {"command": "wikiread", "description": "讀取 David888 Wiki 頁面"},
         {"command": "adfilter", "description": "查看或切換廣告決策過濾"},
+        {"command": "apikey", "description": "產生/輪換個人 API Key 與查看 cURL 用法"},
     ]
     data = {"commands": commands}
     try:
@@ -1729,7 +1894,8 @@ async def handle(action, update, context):
                 "• `/context` - 顯示當前對話上下文與問答輪數\n"
                 "• `/clear` - 清除對話歷史與摘要記錄\n"
                 "• `/yt2audio <URL>` - 下載影片音頻 (MP3)\n"
-                "• `/yt2text <URL>` - 將影片音訊轉為帶時間戳逐字稿文字檔 (.txt)\n\n"
+                "• `/yt2text <URL>` - 將影片音訊轉為帶時間戳逐字稿文字檔 (.txt)\n"
+                "• `/apikey` - 產生/輪換個人 Web API Key 與查看 cURL 用法（限私訊）\n\n"
                 "💬 摘要完成後，直接輸入問題即可對該內容進行深入續問！"
             )
             await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=help_text, parse_mode='Markdown')
@@ -1807,6 +1973,72 @@ async def handle(action, update, context):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+        elif action == 'apikey':
+            chat = update.effective_chat
+            if not chat or chat.type != 'private':
+                deny_text = "🔒 為避免金鑰外洩，請私訊機器人使用 /apikey 管理您的個人 API Key。"
+                if processing_message:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=processing_message.message_id, text=deny_text)
+                else:
+                    await context.bot.send_message(chat_id=chat_id, text=deny_text)
+                return
+
+            manager = await run_blocking(get_api_key_manager)
+            meta = await run_blocking(manager.get_key_metadata, user_id)
+            base_url, source = await run_blocking(resolve_api_base_url)
+            source_labels = {
+                "env": "環境變數 API_PUBLIC_URL",
+                "observed": "外部請求自動偵測",
+                "public_ip": "公網 IP 自動偵測",
+                "localhost": "本機預設位址",
+            }
+            source_label = source_labels.get(source, source)
+            base_url_escaped = html.escape(base_url)
+            source_escaped = html.escape(source_label)
+
+            if meta is None:
+                apikey_text = (
+                    "🔑 <b>【個人 Web API Key 管理】</b>\n\n"
+                    "目前尚未產生 API Key。\n"
+                    "📌 每位 Telegram 用戶僅限 <b>1 把有效金鑰</b>（採 SHA-256 雜湊儲存，不保存明文）。\n\n"
+                    f"🌐 <b>偵測 API 端點：</b><code>{base_url_escaped}</code>（來源：{source_escaped}）"
+                )
+                reply_markup = _build_apikey_status_keyboard(has_key=False)
+            else:
+                masked_escaped = html.escape(meta.get("masked_key") or "")
+                created_escaped = html.escape(str(meta.get("created_at") or "N/A"))
+                lines = [
+                    "🔑 <b>【個人 Web API Key 管理】</b>\n",
+                    f"• 遮罩金鑰：<code>{masked_escaped}</code>",
+                    f"• 建立時間：<code>{created_escaped}</code>",
+                ]
+                if meta.get("rotated_at"):
+                    lines.append(f"• 輪換時間：<code>{html.escape(str(meta['rotated_at']))}</code>")
+                if meta.get("last_used_at"):
+                    lines.append(f"• 最後使用：<code>{html.escape(str(meta['last_used_at']))}</code>")
+                lines.extend([
+                    f"• API 端點：<code>{base_url_escaped}</code>（來源：{source_escaped}）",
+                    "",
+                    "💡 若遺失原金鑰，請使用「Rotate 輪換金鑰」立即換發新金鑰（舊金鑰會即時失效）。",
+                ])
+                apikey_text = "\n".join(lines)
+                reply_markup = _build_apikey_status_keyboard(has_key=True)
+
+            if processing_message:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=apikey_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML',
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=apikey_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML',
+                )
         elif action == 'model':
             # 處理模型切換命令
             args = update.message.text.split()[1:] if update.message.text else []
@@ -2662,6 +2894,7 @@ async def main():
         wiki_handler = CommandHandler('wiki', handle_wiki)
         wikiread_handler = CommandHandler('wikiread', handle_wikiread)
         adfilter_handler = CommandHandler('adfilter', handle_adfilter)
+        apikey_handler = CommandHandler('apikey', handle_apikey)
         set_my_commands(telegram_token)
         summarize_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize)
         file_handler = MessageHandler(filters.Document.ALL, handle_file)
@@ -2683,6 +2916,7 @@ async def main():
         application.add_handler(wiki_handler)
         application.add_handler(wikiread_handler)
         application.add_handler(adfilter_handler)
+        application.add_handler(apikey_handler)
         application.add_handler(clear_handler)
         application.add_handler(context_handler)
         application.add_handler(yt2audio_handler)

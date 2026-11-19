@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-11-19] - Telegram /apikey Single-Key Management & Python 3.14 Upgrade
+
+### ✨ Added
+- **🔑 個人 Web API Key 管理服務 (`app/services/api_keys.py`)**：
+  - 新增 `APIKeyManager` 與 `get_api_key_manager()` / `verify_user_api_key()`，每位 `(bot_scope, telegram_id)` 用戶嚴格限制僅能存在 **1 把有效金鑰**（`oli_` 前綴 + `secrets.token_urlsafe(32)`）。
+  - 採確定性 MongoDB 主鍵 `"_id": f"{bot_scope}:{tg_id}"` 與 SHA-256 雜湊 (`hash_api_key`) 儲存、`hmac.compare_digest` 常數時間驗證，絕不落盤明文金鑰；重複建立直接原子 `insert_one` 並轉拋 `KeyAlreadyExistsError`；`rotate_key()` 採 `upsert=False` 原子覆寫（目標不存在或已撤銷時拋 `KeyNotFoundError` 防止復活），並徹底移除正向憑證快取，每次 `verify_key_owner()` 即時向權威儲存查核（同時檢查 `is_telegram_user_allowed()`，自 `ALLOWED_USERS` 移除成員立即 401 失效）。
+  - 新增 `get_bot_scope()`（取 `TELEGRAM_TOKEN` 前 12 碼 SHA-256 雜湊，未設定時記 warning 並回傳 `default`），確保 `@oli_summary_bot` 與 `@quantaar_bot` 共用同一 MongoDB (`bot_database.api_keys`) 時嚴格跨環境隔離；無 MongoDB 時支援跨行程 `fcntl.flock` 鎖定與原子寫入 JSON (`API_KEYS_FILE`) 或執行緒安全記憶體儲存（JSON 損毀時記 error 並拋 `RuntimeError`，絕不靜默清空覆寫）。
+  - 新增 4 層智慧 API Base URL 自動偵測 (`resolve_api_base_url`, `record_observed_base_url`, `detect_public_ip`, `get_trusted_hosts`, `is_proxy_headers_trusted`)：依序優先採用 `API_PUBLIC_URL`（嚴格拒絕 userinfo、query、fragment 與引號）$\rightarrow$ 僅於設定 `API_TRUSTED_HOSTS` 且於認證通過後才記錄之受信任外部 Host（預設停用動態 Host 學習，並依 `API_TRUST_PROXY_HEADERS` 決定是否採信 `X-Forwarded-*`，徹底杜絕 Host Header Poisoning）$\rightarrow$ 公網 IP 探測（成功 1 小時 / 失敗 60 秒快取 + `_parse_safe_port` 安全解析 `API_PORT`）$\rightarrow$ `localhost:API_PORT`。
+  - 新增 `build_curl_usage_guide()` 使用 `shlex.quote` 安全保護 URL 與 Authorization Header，產出可複製執行的 `/health`、網址/YouTube 摘要與純文字摘要 cURL 指令及 HTTP 安全提醒。
+- **🤖 Telegram `/apikey` 指令與安全互動選單 (`app/legacy.py`, `main.py`)**：
+  - 新增 `/apikey` 指令、`set_my_commands` 註冊與 `/help` 說明，僅限私訊 (`chat.type == 'private'`) 使用，群組呼叫自動攔截保護金鑰不外洩。
+  - 所有管理與儲存呼叫皆透過 `await run_blocking(...)` 執行，實作 `apikey:create`、`apikey:rotate_confirm`、`apikey:rotate_exec`（含 `KeyNotFoundError` 友善引導）、`apikey:revoke_confirm`、`apikey:revoke_exec`、`apikey:curl` 與 `apikey:cancel` 按鈕流程（使用 `html.escape` 搭配 `<pre><code>` 安全排版）。
+  - 於 `handle_button_click` 最開頭補齊 `ALLOWED_USERS` 白名單驗證守衛。
+- **🌐 FastAPI 雙軌 Token 驗證與可信任 Host 觀測 (`app/api.py`, `api.py`)**：
+  - 移除未認證 middleware 對動態 Host 的無條件寫入；改於 `verify_token` 通過靜態或動態驗證後，始呼叫 `_record_trusted_request_host(request)`。
+  - 靜態 token 使用 UTF-8 bytes `secrets.compare_digest` 比對避免非 ASCII 例外；動態 token 先經 `is_candidate_dynamic_api_key` 快篩再透過 `run_blocking(verify_user_api_key, token)` 驗證，後端異常時回傳 HTTP `503 Service Unavailable`。
+- **🧪 新增完整單元與安全回歸測試 (`tests/test_api_keys.py`, `tests/test_dockerfile.py`)**：
+  - 覆蓋 `bot_scope` 跨環境隔離、確定性 `_id` 單一金鑰限制與 `KeyNotFoundError` 防復活契約、並發多執行緒 Rotate/Revoke 零快取即時失效、`ALLOWED_USERS` 即時撤權、`API_TRUSTED_HOSTS` / `API_TRUST_PROXY_HEADERS` 防 Host Header Poisoning、損毀 JSON 拒絕覆寫、`API_PORT` / `API_PUBLIC_URL` 驗證、非 `oli_` 與非 ASCII 401 / DB 異常 503，以及 Python 3.14 Dockerfile 與 `audioop-lts` 檢查。
+
+### 🔄 Changed & Improved
+- **🐍 基礎映像全面升級至 Python 3.14 (`Dockerfile`, `AGENTS.md`, `example.env`, `README.md`)**：
+  - `Dockerfile` 基礎映像由 `python:3.12-slim` 升級至 `python:3.14-slim`（搭配 `requirements.txt` 之 `audioop-lts; python_version >= '3.13'` 相容套件）。
+  - `example.env`、`README.md` 與 `AGENTS.md` 同步補齊選用環境變數 `API_PUBLIC_URL` 與 Python 3.14 部署規格說明。
+
 ## [2026-11-19] - LLM SEO Title Generation & Viral Social Post Overhaul
 
 ### ✨ Added
