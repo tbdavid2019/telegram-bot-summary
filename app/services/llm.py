@@ -159,8 +159,13 @@ def get_configured_endpoints() -> List[LLMEndpoint]:
                     timeout=timeout,
                 ))
 
-    # 5. Auto Groq fallback if GROQ_API_KEY is present and not explicitly configured in previous tiers
-    groq_keys = _split_keys(os.environ.get("GROQ_API_KEY", "") or os.environ.get("GROQ_FALLBACK_KEYS", ""))
+    # 5. Auto Groq fallback if GROQ_API_KEY / GROQ_FALLBACK_KEYS are present and not explicitly configured in previous tiers
+    combined_groq_raw = ",".join(
+        val
+        for val in (os.environ.get("GROQ_API_KEY", ""), os.environ.get("GROQ_FALLBACK_KEYS", ""))
+        if val and val.strip()
+    )
+    groq_keys = _split_keys(combined_groq_raw)
     if groq_keys:
         groq_model = os.environ.get("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b").strip()
         # Add Groq keys if they are not already in the endpoints
@@ -255,7 +260,7 @@ def _execute_chat_completion(
             if alias not in models_to_try:
                 models_to_try.append(alias)
     
-    req_timeout = timeout or endpoint.timeout
+    req_timeout = timeout if timeout is not None else float(os.environ.get("LLM_TIMEOUT_SECONDS", str(endpoint.timeout)))
     last_err = None
 
     for m in models_to_try:
@@ -281,7 +286,12 @@ def _execute_chat_completion(
             status = getattr(getattr(http_err, 'response', None), 'status_code', None)
             if status == 413 and len(prompt) > 6000:
                 logger.warning(f"Payload too large (413) for {m}. Truncating prompt to 6000 chars and retrying...")
-                truncated_prompt = prompt[:6000] + "\n\n[⚠️ 內容過長超過模型容量限制，備援模型已自動截取前段進行結構化摘要]"
+                end_marker = "\n--- END SOURCE CONTENT ---"
+                notice = "\n\n[⚠️ 內容過長超過模型容量限制，備援模型已自動截取前段進行結構化摘要]"
+                if "--- END SOURCE CONTENT ---" in prompt:
+                    truncated_prompt = prompt[:6000] + notice + end_marker
+                else:
+                    truncated_prompt = prompt[:6000] + notice
                 truncated_messages = list(additional_messages or [])
                 truncated_messages.append({"role": "user", "content": truncated_prompt})
                 try:
@@ -297,7 +307,10 @@ def _execute_chat_completion(
                         if content:
                             return content.strip()
                 except Exception as retry_err:
-                    logger.warning(f"Retry with truncated prompt failed for {m}: {retry_err}")
+                    retry_msg = str(retry_err)
+                    if endpoint.api_key and endpoint.api_key in retry_msg:
+                        retry_msg = retry_msg.replace(endpoint.api_key, "[REDACTED]")
+                    logger.warning(f"Retry with truncated prompt failed for {m}: {retry_msg}")
             if status in (400, 404, 413) and m != models_to_try[-1]:
                 last_err = http_err
                 continue
@@ -370,7 +383,7 @@ def call_llm_with_fallback(
     last_error = None
     for idx, candidate in enumerate(candidates):
         try:
-            print(f"[LLM] Calling candidate #{idx + 1} '{candidate.name}' (Model: {candidate.model}, Base URL: {candidate.clean_base_url})...")
+            logger.info("[LLM] Calling candidate #%d '%s' (Model: %s, Base URL: %s)...", idx + 1, candidate.name, candidate.model, candidate.clean_base_url)
             content = _execute_chat_completion(
                 endpoint=candidate,
                 prompt=prompt,
@@ -380,25 +393,23 @@ def call_llm_with_fallback(
             
             if content:
                 if idx > 0:
-                    print(f"[LLM Fallback SUCCESS] ✅ Failover to #{idx + 1} '{candidate.name}' ({candidate.model}) succeeded!")
+                    logger.info("[LLM Fallback SUCCESS] Failover to #%d '%s' (%s) succeeded!", idx + 1, candidate.name, candidate.model)
                 return content
-            else:
-                print(f"[LLM Fallback] ⚠️ Candidate '{candidate.name}' returned empty text. Trying next fallback...")
+            logger.warning("[LLM Fallback] Candidate '%s' returned empty text. Trying next fallback...", candidate.name)
                 
         except requests.exceptions.RequestException as req_err:
             status_code = getattr(getattr(req_err, 'response', None), 'status_code', 'N/A')
             err_msg = str(req_err)
-            # Avoid leaking secrets in exception messages
             if candidate.api_key and candidate.api_key in err_msg:
                 err_msg = err_msg.replace(candidate.api_key, "[REDACTED]")
-            print(f"[LLM Fallback] ⚠️ Candidate #{idx + 1} '{candidate.name}' failed (HTTP {status_code}: {err_msg}). Failing over to next LLM...")
-            last_error = req_err
+            logger.warning("[LLM Fallback] Candidate #%d '%s' failed (HTTP %s: %s). Failing over to next LLM...", idx + 1, candidate.name, status_code, err_msg)
+            last_error = f"HTTP {status_code}: {err_msg}"
         except Exception as gen_err:
             err_msg = str(gen_err)
             if candidate.api_key and candidate.api_key in err_msg:
                 err_msg = err_msg.replace(candidate.api_key, "[REDACTED]")
-            print(f"[LLM Fallback] ⚠️ Candidate #{idx + 1} '{candidate.name}' exception: {err_msg}. Failing over to next LLM...")
-            last_error = gen_err
+            logger.warning("[LLM Fallback] Candidate #%d '%s' exception: %s. Failing over to next LLM...", idx + 1, candidate.name, err_msg)
+            last_error = err_msg
 
-    print(f"[LLM CRITICAL] ❌ All {len(candidates)} LLM candidate(s) failed. Last error: {last_error}")
+    logger.error("[LLM CRITICAL] All %d LLM candidate(s) failed. Last error: %s", len(candidates), last_error)
     return ""

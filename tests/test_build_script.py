@@ -8,3 +8,5 @@ class BuildScriptTests(unittest.TestCase):
 
         self.assertIn("DEPLOY_CONFIRM", source)
         self.assertIn('if [ "${DEPLOY_CONFIRM:-0}" != "1" ]', source)
+        self.assertIn("/app/data", source)
+        self.assertIn("com.centurylinklabs.watchtower.scope=summary", source)

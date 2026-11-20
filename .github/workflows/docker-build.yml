@@ -23,12 +23,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Ensure optional build files exist
-        run: |
-          # Dockerfile has "COPY cookies.txt .", but cookies.txt is in .gitignore.
-          # Touch it so docker build won't fail if the file is absent in clean checkout.
-          touch cookies.txt
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

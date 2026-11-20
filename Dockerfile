@@ -26,10 +26,8 @@ RUN python3 -c "from magika import Magika; m = Magika(); print('Magika initializ
 
 WORKDIR /app
 
-# 複製應用程式 package 到容器
+# 複製應用程式 package 到容器 (cookies.txt 改由執行期 volume 掛載，不打包進映像)
 COPY app /app/app
-# 複製 cookies 文件到容器
-COPY cookies.txt .
 
 # 設置環境變量以明確指定 ffmpeg 的位置
 ENV PATH="/usr/bin:${PATH}"
@@ -37,5 +35,8 @@ ENV PATH="/usr/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python3 -c "import os, urllib.request; p = os.environ.get('API_PORT', '8001'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
 
 ENTRYPOINT ["python3", "-u", "-m", "app.main"]

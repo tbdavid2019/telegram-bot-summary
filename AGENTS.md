@@ -14,7 +14,7 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
    - Clearly document what changed, why it changed, and relevant module/service paths.
 
 2. **`README.md` MUST ALWAYS BE UPDATED**:
-   - Ensure the **Features** list, **Core/New Features** section, and **Usage / Command Reference Tables** (`/start`, `/help`, `/lang`, `/model`, `/tarot`, `/yiyu`, `/yt2audio`, `/yt2text`, etc.) are 100% up to date.
+   - Ensure the **Features** list, **Core/New Features** section, and **Usage / Command Reference Tables** (`/start`, `/help`, `/lang`, `/model`, `/tarot`, `/yiyu`, `/yt2audio`, `/yt2text`, `/apikey`, etc.) are 100% up to date.
    - Update environment variable descriptions in tables if `.env` keys are added or modified.
 
 3. **Never skip documentation**: Committing code without updating `docs/changelog.md` and `README.md` is strictly prohibited.
@@ -23,19 +23,29 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 
 ## 🏗️ 2. Architecture & Code Synchronization Rules
 
-1. **Dual Entrypoint Synchronization**:
-   - `app/legacy.py` (used when executed as package `app.main`) and `main.py` (legacy root mirror) **MUST BE KEPT IN EXACT SYNC**.
-   - After editing `app/legacy.py`, sync changes to `main.py` (adjusting import paths `from app.runtime` -> `from runtime`, `from app.api` -> `from api`).
+1. **Canonical Package Entrypoints (`app/`) & Thin Root Shims**:
+   - All production logic lives inside `app/` (`app/main.py`, `app/legacy.py`, `app/api.py`, `app/config.py`, `app/runtime.py`, `app/repositories/`, `app/services/`).
+   - Root `main.py`, `api.py`, and `runtime.py` are **thin compatibility shims** re-exporting from `app.*` so direct root invocations (`python main.py`, `uvicorn api:app`) work without duplicating code. Never re-introduce mirrored logic into root files.
 
-2. **Modular Services**:
-   - Place domain logic under `app/services/`:
-     - `app/services/content.py`: Web content extraction, document conversion (`AnyDoc`), and Whisper timestamp formatting.
-     - `app/services/divination.py`: Tarot (`/tarot`) and Yinyuan/Zodiac (`/yiyu`) APIs.
-   - Always use `await run_blocking(...)` from `app.runtime` for blocking CPU or I/O operations (LLM calls, yt-dlp downloads, ASR requests, file parsing) to avoid blocking the Telegram event loop.
+2. **Modular Services (`app/services/` & `app/repositories/`)**:
+   - `app/config.py`: `Settings`, shared `get_mongo_client()` pool, `is_admin_user()`, bot profile & `/app/data` persistence helpers.
+   - `app/repositories/summaries.py`: `SummaryRepository` with `bot_scope` tagging.
+   - `app/services/api_keys.py`: Per-user single API key management (`oli_`), `bot_scope` isolation, 4-layer base URL discovery.
+   - `app/services/box.py`: 888box cloud asset upload & stats with SSRF check and multi-node failover.
+   - `app/services/content.py`: URL/note parsing, SSRF `is_safe_url()` + `safe_http_get()`, Magika detection, `AnyDoc` conversion, streaming Whisper ASR (`transcribe_local_audio`), title/summary helpers.
+   - `app/services/decision.py`: Clef-Flash System One ad/spam filtering with Memory/MongoDB/atomic-disk cache.
+   - `app/services/divination.py`: Tarot (`/tarot`) and Yinyuan/Zodiac (`/yiyu`) APIs.
+   - `app/services/llm.py`: Multi-tier & multi-key LLM failover (`call_llm_with_fallback`).
+   - `app/services/podcast.py`: Pocket Casts, SoundOn, Apple Podcast RSS extraction, TTL cache, and audio transcription.
+   - `app/services/quick_reply.py`: Quick Reply inline keyboard, style transforms, social post cleanup.
+   - `app/services/summarization.py`: Canonical `summarize()` and system prompts shared by Bot and FastAPI.
+   - `app/services/telegram_delivery.py`: Telegram Markdown-to-HTML safe chunking and delivery.
+   - `app/services/wiki.py`: David888 Wiki publisher/reader with path traversal protection.
+   - Always use `await run_blocking(...)` from `app.runtime` for blocking CPU or I/O operations (LLM calls, yt-dlp downloads, ASR requests, file parsing, HTTP requests) to avoid blocking the Telegram/FastAPI event loop.
 
 3. **Automated Unit Testing**:
-   - All services must have test coverage under `tests/` (`test_content.py`, `test_divination.py`, `test_async_boundaries.py`, etc.).
-   - **Mandatory test check**: Before pushing, run `python3 -m unittest discover -s tests` and ensure all tests pass with 0 failures/errors.
+   - All services must have test coverage under `tests/` (`test_content.py`, `test_divination.py`, `test_async_boundaries.py`, `test_audit_fixes.py`, etc.).
+   - **Mandatory test check**: Before pushing, run `python3 -m unittest discover -s tests` (using the Python 3.14 environment) and ensure all tests pass with 0 failures/errors.
 
 ---
 
@@ -43,11 +53,11 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 
 1. **Document Conversion (AnyDoc by Firecrawl)**:
    - **DO NOT** use or re-introduce `markitdown`.
-   - Use `firecrawl-anydoc` (`anydoc.to_markdown(file_path)`) for parsing Word (DOCX), PowerPoint (PPTX), Excel (XLSX), PDF, EPUB, RTF, CSV into GitHub-Flavored Markdown.
+   - Use `firecrawl-anydoc` (`anydoc.to_markdown(file_path)`) for parsing Word (DOCX), PowerPoint (PPTX), Excel (XLSX), PDF, EPUB, RTF into GitHub-Flavored Markdown (and direct UTF-8 read for plain text/CSV/code).
    - Use `convert_document_to_markdown(file_path)` from `app.services.content`.
 
 2. **Whisper ASR Speech-to-Text**:
-   - Groq Whisper API calls MUST request `response_format=verbose_json`.
+   - Groq Whisper API calls MUST request `response_format=verbose_json` via HTTPS `requests.post` (never expose API keys in `curl` CLI args).
    - All speech-to-text outputs MUST default to timestamped lines formatted as `[MM:SS]` or `[HH:MM:SS]` using `format_whisper_segments`.
 
 3. **Telegram Long Text Delivery**:
@@ -64,7 +74,7 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
 5. **David888 Wiki Knowledge Base Publisher (`app/services/wiki.py`)**:
    - Endpoint: `https://wiki.david888.com/api`
    - Canonical Skill Spec: `https://wiki.david888.com/.well-known/agent-skills/david888-wiki-publisher/SKILL.md`
-   - **PRIMARY PURPOSE (FOR LLM AGENTS)**: David888 Wiki is designed for the **LLM itself**! When users request long-form analyses, research reports, complex guides, or slide decks, the LLM autonomously writes structured Markdown, publishes it to David888 Wiki, and delivers the executive summary in chat accompanied by the public **`shareUrl`**, **`presentUrl`** (`/present`), and **`bookUrl`** (`/book`).
+   - **PRIMARY PURPOSE (FOR LLM AGENTS)**: Deliver executive summary in chat accompanied by public **`shareUrl`**, **`presentUrl`** (`/present`), and **`bookUrl`** (`/book`) when the user requests Wiki/report generation or clicks `/wiki`. Never auto-publish casual chats purely by length.
    - **MANDATORY DOCUMENT STRUCTURE RULE**: Markdown documents MUST ALWAYS start with a level-1 `# Document Title` on the very first line. Never prefix with conversational filler. Place `[TOC]`, alerts, and blockquotes AFTER `# Document Title`.
    - **CRITICAL LINK RULE**: Always deliver `shareUrl` (`https://wiki.david888.com/share/<shareId>`), `presentUrl` (`<shareUrl>/present`), or `bookUrl` (`<shareUrl>/book`) to users. Never give internal edit `url`.
    - **DIRECT RAW MARKDOWN UPLOAD**: Prefer `Content-Type: text/markdown; charset=UTF-8` with query parameters (`?public=true&theme=tokyo-night&width=100%`) when publishing large markdown notes.

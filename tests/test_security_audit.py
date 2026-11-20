@@ -50,7 +50,7 @@ class SecurityAuditTests(unittest.TestCase):
         self.assertEqual(response.headers.get("x-content-type-options"), "nosniff")
         self.assertEqual(response.headers.get("x-frame-options"), "DENY")
         self.assertEqual(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin")
-        self.assertEqual(response.headers.get("x-xss-protection"), "1; mode=block")
+        self.assertEqual(response.headers.get("cache-control"), "no-store")
         self.assertIn("camera=()", response.headers.get("permissions-policy", ""))
 
     def test_fastapi_auth_token_security(self):

@@ -1,8 +1,10 @@
-"""888box asset storage service client with automatic multi-endpoint failover."""
+"""888box asset storage service client with SSRF check and multi-endpoint failover."""
 
 import os
 import requests
 from typing import Optional, Dict, Any, List
+
+from app.services.content import is_safe_url
 
 DEFAULT_BOX_ENDPOINTS = [
     "https://box.david888.com",  # 主要節點
@@ -24,7 +26,19 @@ def get_box_endpoints() -> List[str]:
     return DEFAULT_BOX_ENDPOINTS.copy()
 
 
-BOX_API_TOKEN = os.environ.get("BOX_API_TOKEN", "")
+def _resolve_box_token(token: Optional[str]) -> str:
+    if token is not None:
+        return token
+    return os.environ.get("BOX_API_TOKEN", "")
+
+
+def _parse_json_response(response: requests.Response) -> Dict[str, Any]:
+    if hasattr(response, "raise_for_status"):
+        response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("Invalid JSON payload from 888box")
+    return data
 
 
 def upload_file_to_box(
@@ -33,11 +47,11 @@ def upload_file_to_box(
     description: str = "",
     password: str = "",
     token: Optional[str] = None,
-    timeout: int = 60
+    timeout: int = 60,
 ) -> Dict[str, Any]:
     """Upload local file (text, pdf, audio, video, etc.) to 888box with fallback."""
     endpoints = get_box_endpoints()
-    api_token = token or BOX_API_TOKEN
+    api_token = _resolve_box_token(token)
     data = {}
     if title:
         data["title"] = title
@@ -58,7 +72,7 @@ def upload_file_to_box(
                 files = {"file": (filename, f)}
                 response = requests.post(url, files=files, data=data, timeout=timeout)
 
-            res_json = response.json()
+            res_json = _parse_json_response(response)
             if res_json.get("result") == "success":
                 return {
                     "success": True,
@@ -67,9 +81,8 @@ def upload_file_to_box(
                     "share_url": res_json.get("data", {}).get("share_url"),
                     "endpoint": ep,
                 }
-            else:
-                last_error = res_json.get("message", f"Upload failed on {ep}")
-                print(f"[888box] Upload failed on {ep}: {last_error}, trying fallback...")
+            last_error = res_json.get("message", f"Upload failed on {ep}")
+            print(f"[888box] Upload failed on {ep}: {last_error}, trying fallback...")
         except Exception as e:
             last_error = str(e)
             print(f"[888box] Exception on {ep}: {e}, trying fallback...")
@@ -83,11 +96,14 @@ def upload_url_to_box(
     description: str = "",
     password: str = "",
     token: Optional[str] = None,
-    timeout: int = 60
+    timeout: int = 60,
 ) -> Dict[str, Any]:
-    """Upload remote asset URL to 888box with fallback."""
+    """Upload remote asset URL to 888box with SSRF check and multi-endpoint fallback."""
+    if not is_safe_url(remote_url):
+        return {"success": False, "error": "不支援或受保護的私有/內部網路網址 (Blocked private or invalid URL)。"}
+
     endpoints = get_box_endpoints()
-    api_token = token or BOX_API_TOKEN
+    api_token = _resolve_box_token(token)
     payload = {"url": remote_url}
     if title:
         payload["title"] = title
@@ -104,7 +120,7 @@ def upload_url_to_box(
         endpoint = f"{ep}/api.php?action=upload_url"
         try:
             response = requests.post(endpoint, data=payload, timeout=timeout)
-            res_json = response.json()
+            res_json = _parse_json_response(response)
             if res_json.get("result") == "success":
                 return {
                     "success": True,
@@ -113,9 +129,8 @@ def upload_url_to_box(
                     "share_url": res_json.get("data", {}).get("share_url"),
                     "endpoint": ep,
                 }
-            else:
-                last_error = res_json.get("message", f"Upload by URL failed on {ep}")
-                print(f"[888box] URL upload failed on {ep}: {last_error}, trying fallback...")
+            last_error = res_json.get("message", f"Upload by URL failed on {ep}")
+            print(f"[888box] URL upload failed on {ep}: {last_error}, trying fallback...")
         except Exception as e:
             last_error = str(e)
             print(f"[888box] Exception on {ep}: {e}, trying fallback...")
@@ -126,7 +141,7 @@ def upload_url_to_box(
 def get_box_stats(token: Optional[str] = None, timeout: int = 15) -> Dict[str, Any]:
     """Get asset statistics from 888box with fallback."""
     endpoints = get_box_endpoints()
-    api_token = token or BOX_API_TOKEN
+    api_token = _resolve_box_token(token)
     params = {}
     if api_token:
         params["token"] = api_token
@@ -137,15 +152,14 @@ def get_box_stats(token: Optional[str] = None, timeout: int = 15) -> Dict[str, A
         endpoint = f"{ep}/api.php?action=stats"
         try:
             response = requests.get(endpoint, params=params, timeout=timeout)
-            res_json = response.json()
+            res_json = _parse_json_response(response)
             if res_json.get("result") == "success":
                 return {
                     "success": True,
                     "data": res_json.get("data", {}),
                     "endpoint": ep,
                 }
-            else:
-                last_error = res_json.get("message", f"Failed to get stats on {ep}")
+            last_error = res_json.get("message", f"Failed to get stats on {ep}")
         except Exception as e:
             last_error = str(e)
 

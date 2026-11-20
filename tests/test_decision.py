@@ -166,7 +166,7 @@ class TestDecisionService(unittest.TestCase):
 
     def test_fastapi_summarize_ad_detection(self):
         from fastapi.testclient import TestClient
-        from api import app as fastapi_app, valid_tokens
+        from app.api import app as fastapi_app, valid_tokens
 
         client = TestClient(fastapi_app)
         sample_token = list(valid_tokens)[0]
@@ -180,7 +180,7 @@ class TestDecisionService(unittest.TestCase):
 
             with patch("app.services.decision.is_advertisement_content") as mock_ad_check:
                 mock_ad_check.return_value = (True, {"is_ad": True, "prob_ad": 0.99, "cached": False})
-                with patch("api.run_blocking") as mock_run:
+                with patch("app.api.run_blocking") as mock_run:
                     mock_run.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
                     response = client.post(
                         "/api/v1/summarize",

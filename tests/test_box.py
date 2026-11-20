@@ -17,16 +17,21 @@ class TestBoxService(unittest.TestCase):
         }
         mock_post.return_value = mock_resp
 
+        import os
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
             f.write(b"hello box")
             tmp_name = f.name
 
-        res = upload_file_to_box(tmp_name, title="Test", description="Desc")
-        self.assertTrue(res["success"])
-        self.assertEqual(res["id"], "100")
-        self.assertIn("cloudfront.net", res["url"])
-        self.assertIn("box.david888.com", res["share_url"])
+        try:
+            res = upload_file_to_box(tmp_name, title="Test", description="Desc")
+            self.assertTrue(res["success"])
+            self.assertEqual(res["id"], "100")
+            self.assertIn("cloudfront.net", res["url"])
+            self.assertIn("box.david888.com", res["share_url"])
+        finally:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
 
     @patch("app.services.box.requests.post")
     def test_upload_url_success(self, mock_post):

@@ -31,6 +31,8 @@ htmlcov/
 dist/
 build/
 .cache/
+data/
+*.pkl
 
 # Temporary media and downloads
 /tmp/

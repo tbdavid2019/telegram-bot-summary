@@ -322,23 +322,22 @@ nano .env  # 填入 TELEGRAM_TOKEN, LLM_API_KEY 等必要資訊
 ```
 
 ### 步驟 3: 啟動 Chrome 輔助容器 (關鍵)
-執行內建的設定腳本，這會啟動一個 Headless Chrome 容器，並綁定資料夾 `/home/bitnami/chrome-data`：
+執行內建的設定腳本，這會啟動一個 Headless Chrome 容器，並將 `${HOME}/chrome-data` 掛載為設定目錄（同時僅於本機 `127.0.0.1` 綁定 WebUI Port `3000` 與 VNC Port `5900`）：
 ```bash
 chmod +x setup_chrome_container.sh
 ./setup_chrome_container.sh
 ```
 
 ### 步驟 4: 登入 YouTube 建立真實 Session
-1. Chrome 容器啟動後，它會開啟一個 VNC/WebUI 介面在你的伺服器 Port `3000`。
-2. 打開瀏覽器前往 `http://<你的伺服器IP>:3000`。
-3. 在裡面打開 YouTube 首頁並**登入你的 Google 帳號**。
-4. 隨便點播 1-2 部影片，確定能正常播放（這會讓系統產生足夠的驗證 Token）。
-5. 完成後就可以關閉該 WebUI 網頁。
+1. Chrome 容器啟動後，可透過本機瀏覽器或 SSH Port Forwarding 存取 `http://127.0.0.1:3000`（或 VNC Port `5900`）。
+2. 在裡面打開 YouTube 首頁並**登入你的 Google 帳號**。
+3. 隨便點播 1-2 部影片，確定能正常播放（這會讓系統產生足夠的驗證 Token）。
+4. 完成後就可以關閉該 WebUI 網頁。
 
 ### 步驟 5: Build 並啟動 Telegram Bot
-執行 `build.sh`，它會自動打包 Bot 並把剛剛 Chrome 的設定檔掛載進 Bot 容器中供 `yt-dlp` 使用：
+執行 `build.sh`，它會自動打包 Bot 並掛載 Chrome 設定檔、`cookies.txt`（若有）與 `/app/data` 持久化目錄供 Bot 與 `yt-dlp` 使用：
 ```bash
-./build.sh
+DEPLOY_CONFIRM=1 ./build.sh
 ```
 
 🎉 **完成！你的 Bot 現在已經可以順利繞過 YouTube 的機器人驗證並生成摘要了！**
@@ -383,15 +382,15 @@ chmod +x setup_chrome_container.sh
 | /help | 顯示幫助訊息 |
 | /lang | 切換語言 (繁體中文 ⇄ English) |
 | /model | 切換/列出 LLM 模型 |
-| /tarot [牌陣] [問題] | 塔羅抽牌與 AI 深度解讀 (支援單張/三張/六角/塞爾特等牌陣) |
-| /yiyu [模式] [問題] | 月老姻緣求籤與生肖合婚契合度測算 |
+| /tarot [牌陣] [問題] | 塔羅抽牌與 AI 深度解讀 (支援單張/三張/鑽石/月亮/馬蹄鐵/塞爾特十字牌陣) |
+| /yiyu [模式] [問題] | 月老姻緣求籤與生肖合婚契合度測算（別名 `/yinyuan`） |
 | /boa | 解答之書 Book of Answers |
 | /context | 顯示當前對話上下文 |
 | /clear | 清除對話歷史 |
 | /yt2audio <URL> | 下載影片音頻 |
 | /yt2text <URL> | 將影片轉成帶時間戳的逐字稿文字檔 (`.txt`) |
-| /box <URL> [標題] | 將遠端影片、音訊、圖片、文件轉存至 888box 雲端 |
-| /boxstats | 查看 888box 當前儲存的資產總數與分類統計 |
+| /box <URL> [標題] | 將遠端影片、音訊、圖片、文件轉存至 888box 雲端（公開模式限管理員） |
+| /boxstats | 查看 888box 當前儲存的資產總數與分類統計（公開模式限管理員） |
 | /wiki [標題/內容] | 發布至 David888 Wiki 知識庫 (產出公開好讀版與投影片) |
 | /wikiread <路徑> | 讀取 David888 Wiki 頁面內容 |
 | /adfilter | 查看或切換廣告決策過濾狀態 (預設開啟，附帶隨點強制查看按鈕) |
@@ -415,22 +414,17 @@ chmod +x setup_chrome_container.sh
 在本地電腦執行以下命令來導出 cookies：
 
 ```bash
-yt-dlp --cookies-from-browser chrome -F "視頻URL" --skip-download
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt
 ```
 
 將產生的 cookies.txt 檔案放入專案根目錄
 
 #### 2. 自動化 Chrome Docker 方案 (推薦)
 
-若您有運行中的 Chrome Docker 容器，可以使用自動化方案定期抓取並同步 cookies：
+1. **運行 Chrome 容器**：使用 `./setup_chrome_container.sh` 啟動 `linuxserver/chromium` 並持久化 `${HOME}/chrome-data`。
+2. **Volume 即時掛載**：透過 `DEPLOY_CONFIRM=1 ./build.sh`（或指定 `CHROME_DATA_DIR`），直接掛載 Chrome Profile 與選用 `cookies.txt` 給 Bot 使用。
 
-1. **運行 Chrome 容器**：使用 `linuxserver/chromium` 或類似映像檔。
-2. **自動化指令**：
-   - 確保 `chrome-data` 目錄已掛載。
-   - 使用 `./extract_youtube_cookies.sh` 手動執行提取。
-   - 腳本會自動將 cookies 同步到專案目錄並透過 Docker Volume 即時掛載給 Bot 使用。
-
-詳細變更記錄請參閱 [Changelog](file:///home/bitnami/telegram-bot-summary/docs/changelog.md)。
+詳細變更記錄請參閱 [Changelog](docs/changelog.md)。
 
 #### 3. 拉取 Docker 映像
 支援從 **Docker Hub** 或 **GitHub Container Registry (GHCR)** 雙來源拉取映像：
@@ -443,17 +437,19 @@ docker pull tbdavid2019/telegram-bot-summary:latest
 docker pull ghcr.io/tbdavid2019/telegram-bot-summary:latest
 ```
 
-#### 2. 運行 Docker 容器
-執行以下命令來運行容器，請根據需求替換 `<value>`。
+#### 4. 運行 Docker 容器
+執行以下命令來運行容器（請先備妥 `.env`）：
 ```bash
 docker run -d \
-    --name summary-gpt-bot \
+    --name telegram-bot-summary \
     --restart unless-stopped \
-    --env-file example.env \
+    -p 8001:8001 \
+    -v "$PWD/data:/app/data" \
+    --env-file .env \
     tbdavid2019/telegram-bot-summary:latest
 ```
 
-#### 3. 環境變數說明
+#### 5. 環境變數說明
 
 以下為主要環境變數：
 
@@ -504,14 +500,18 @@ docker run -d \
 
 | Environment Variable  | Description                                                        |
 |------------------------|--------------------------------------------------------------------|
-| `CHUNK_SIZE`          | 最大處理塊大小，默認值為 `2100`                                   |
-| `LLM_MODEL`           | 語言模型，例如 `chatgpt-4o-latest` 或 `llama-3.1`                |
+| `CHUNK_SIZE`          | 逐字稿/字幕最大分段字元數，程式預設 `2100`（`example.env` 範例為 `90000`） |
 | `TELEGRAM_TOKEN`      | Telegram 機器人的 API 令牌                                        |
-| `TS_LANG`             | 預設摘要語言，默認值為 `繁體中文`                                |
 | `USE_AUDIO_FALLBACK`  | 是否啟用無字幕影片處理功能，`1` 表示啟用，`0` 表示禁用           |
-| `ALLOWED_USERS`       | 允許使用機器人的用戶 ID 列表，用逗號分隔                          |
+| `ALLOWED_USERS`       | 允許使用機器人的用戶 ID 列表，用逗號分隔（公開模式留空）          |
+| `ADMIN_USERS`         | 允許執行 `/box`、`/boxstats` 等敏感管理指令的 Telegram User ID 列表 |
+| `PUBLIC_ALLOW_PRIVILEGED_COMMANDS` | 公開模式（`ADMIN_USERS` 與 `ALLOWED_USERS` 皆空）是否開放 `/box` 等權限指令；預設 `0`（禁用） |
 | `SHOW_PROCESSING`     | 是否顯示處理中訊息，`1` 表示啟用，`0` 表示禁用                   |
 | `AUTHOR_NOTE_LABEL`   | 選用；自訂網址附帶筆記區塊標題（預設：`[ DAVID888 筆記／觀點備註 ]`） |
+| `BOT_DISPLAY_NAME` / `BOT_TAGLINE` | 選用；自訂機器人顯示名稱與摘要頁尾標籤               |
+| `BOT_DATA_DIR`        | 選用；統一本地持久化目錄（掛載 `/app/data` 時自動偵測），存放 `bot_persistence.pkl` 與預設 `api_keys.json` |
+| `BOT_PERSISTENCE_PATH` | 選用；覆寫 PTB 狀態持久化檔案路徑（預設 `<BOT_DATA_DIR>/bot_persistence.pkl`） |
+| `GROQ_FALLBACK_KEYS`  | 選用；Groq 備用金鑰列表（逗號分隔，與 `GROQ_API_KEY` 合併輪替使用） |
 
 ### SMTP Variables
 
@@ -550,60 +550,26 @@ docker run -d \
 當映像有新更新時，使用以下命令更新容器：
 
 ```bash
-# 從 GHCR 更新 (或使用 tbdavid2019/telegram-bot-summary:latest)
+# 從 GHCR 或 Docker Hub 更新（建議直接使用 DEPLOY_CONFIRM=1 ./build.sh 以自動保留所有掛載與標籤）
 docker pull ghcr.io/tbdavid2019/telegram-bot-summary:latest
-docker stop summary-gpt-bot
-docker rm summary-gpt-bot
+docker stop telegram-bot-summary && docker rm telegram-bot-summary
 docker run -d \
-    --name summary-gpt-bot \
+    --name telegram-bot-summary \
     --restart unless-stopped \
-    --env-file example.env \
+    --label com.centurylinklabs.watchtower.enable=true \
+    --label com.centurylinklabs.watchtower.scope=summary \
+    -p 8001:8001 \
+    -v "$PWD/data:/app/data" \
+    -v "$HOME/chrome-data:/chrome-data" \
+    --env-file .env \
     ghcr.io/tbdavid2019/telegram-bot-summary:latest
 ```
 
 ---
 
-## 新增 `example.env`
+## 新增 `.env`
 
-以下為範例 `.env` 文件內容：
-
-```env
-# 基本設置
-CHUNK_SIZE=8000
-LLM_MODEL=gemini-2.0-flash-exp
-USE_AUDIO_FALLBACK=1
-
-# API 金鑰
-OPENAI_API_KEY=your_openai_api_key
-GROQ_API_KEY=your_groq_api_key
-
-# Telegram 配置
-TELEGRAM_TOKEN=your_telegram_bot_token
-ALLOWED_USERS=123456789,987654321
-
-# MongoDB 配置
-MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/
-
-# 顯示處理中訊息 (1 啟用，0 禁用)
-SHOW_PROCESSING=1
-
-# LLM URL
-LLM_BASE_URL=https://gemini.david888.com/v1
-
-# SMTP 配置
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=465
-SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_email_password
-SMTP_CC_EMAILS=cc1@gmail.com,cc2@gmail.com
-
-# Web API 配置 (用於 LLM / 外部系統 API 存取)
-API_AUTH_TOKENS=your_api_token_1,your_api_token_2
-API_PORT=8001
-# API_PUBLIC_URL=https://summary-api.example.com
-# API_TRUSTED_HOSTS=summary-api.example.com
-# API_TRUST_PROXY_HEADERS=false
-# API_KEYS_FILE=.cache/api_keys.json
+完整且最新之環境變數範本請直接參閱並複製 [`example.env`](example.env)（包含 `MAGPIE_*`、`LLM1~20_*`、`LLM_FALLBACK_CONFIGS`、`GROQ_*`、`CLEF_*`、`BOX_*`、`WIKI_*`、`ADMIN_USERS`、`API_*` 等完整設定）。
 
 ---
 
@@ -622,14 +588,14 @@ API_PORT=8001
 | `API_PUBLIC_URL` | 選用；對外公開 API 基礎網址（供 `/apikey` 產生 cURL 指令，留空時自動偵測） | `https://summary-api.example.com` |
 | `API_TRUSTED_HOSTS` | 選用；逗號分隔允許觀測記錄的外部 Hostname 白名單（不含 port）；留空停用動態 Host 學習 | `summary-api.example.com` |
 | `API_TRUST_PROXY_HEADERS` | 選用；僅於信任反向代理時設為 `true` 才讀取 `X-Forwarded-Proto` / `X-Forwarded-Host` | `false` |
-| `API_KEYS_FILE` | 選用；未設定 `MONGO_URI` 時之動態 API Key 本地 JSON 儲存路徑 | `.cache/api_keys.json` |
+| `API_KEYS_FILE` | 選用；未設定 `MONGO_URI` 時之動態 API Key 本地 JSON 儲存路徑 | `<BOT_DATA_DIR>/api_keys.json`（未掛載時為記憶體模式） |
 | `WEB_REQUEST_TIMEOUT_SECONDS` | Webhook、SMTP 等一般外部服務的最長等待秒數 | `60` |
 | `LLM_TIMEOUT_SECONDS` | 單次 LLM 摘要/問答呼叫的最長等待秒數 | `180` |
 | `ASR_TIMEOUT_SECONDS` | 每段 Whisper ASR 轉錄的最長等待秒數 | `600` |
 | `MEDIA_DOWNLOAD_TIMEOUT_SECONDS` | Podcast/影片音訊下載的最長等待秒數 | `900` |
 | `MONGO_TIMEOUT_MS` | MongoDB 連線逾時毫秒數 | `5000` |
 
-> 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時於容器 Log 中動態產生一組隨機的安全 Token。*
+> 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時動態產生內部隨機 Token（基於安全考量不寫入日誌；正式環境請於 `.env` 設定 `API_AUTH_TOKENS` 或透過私訊 `/apikey` 產生個人金鑰）。*
 
 > 💡 *若 `MONGO_URI` 留空，Bot 會略過摘要儲存，仍會正常回覆 Telegram 與 API 請求。*
 
@@ -637,7 +603,8 @@ API_PORT=8001
 
 #### 外部端點 (Default Port: `8001`)
 
-* **`GET /health`**：健康檢查
+* **`GET /health`**：存活檢查（Liveness）
+* **`GET /readyz`**：就緒檢查（MongoDB 與 Bot Polling 狀態）
 * **`POST /api/v1/summarize`**：發送摘要請求
   * **Header**: `Authorization: Bearer <API_AUTH_TOKEN>`
   * **Body (JSON)**:
@@ -658,19 +625,20 @@ API_PORT=8001
       "title": "AI SEO 優化後標題",
       "original_title": "Original Video or Webpage Title",
       "original_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      "summary": "# ⓵ 【容易懂 Easy Know】\n..."
+      "summary": "### ⓵ 【容易懂 Easy Know】\n...",
+      "is_ad": false
     }
     ```
 
 ### 3. LLM 介接 (SKILL.md)
 
-專案根目錄下附有專門為 LLM 說明的指令檔 [`SKILL.md`](file:///home/bitnami/telegram-bot-summary/SKILL.md)，包含完整請求格式與 **OpenAPI 3.0 YAML** 規格，可直接匯入 OpenAI Custom GPTs Actions 或 Prompt 系統。
+專案根目錄下附有專門為 LLM 說明的指令檔 [`SKILL.md`](SKILL.md)，包含完整請求格式與 **OpenAPI 3.0 YAML** 規格，可直接匯入 OpenAI Custom GPTs Actions 或 Prompt 系統。
 
 ---
 
 ## 🚀 CI/CD 與自動化部署機制 (Continuous Deployment)
 
-本專案採用 **GitHub Actions + Dual-Registry + Scoped Watchtower** 的零停機持續整合與部署架構：
+本專案採用 **GitHub Actions + Dual-Registry + Scoped Watchtower** 的自動化持續整合與部署架構：
 
 1. **持續整合 (CI - GitHub Actions)**：
    - 每當程式推送到 `main` 分支，`.github/workflows/docker-build.yml` 自動觸發。

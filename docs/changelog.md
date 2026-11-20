@@ -1,5 +1,38 @@
 # Changelog
 
+## [2026-11-20] - EGM Comprehensive Security, Reliability, Architecture & Docs Overhaul
+
+### ✨ Added
+- **🛡️ 安全強化與操作邊界防護 (`Dockerfile`, `.dockerignore`, `app/config.py`, `app/services/content.py`, `app/api.py`)**:
+  - 新增 `.dockerignore` 並移除 `Dockerfile` 之 `COPY cookies.txt .` 與 CI `touch cookies.txt` 權宜作法，防止本機 cookies/secrets 打包進 Docker 映像層；加入 `HEALTHCHECK` 探針。
+  - `app/config.py` 新增共用 `get_mongo_client()` 連線池、`is_admin_user()`（以 `ADMIN_USERS` 保護公開模式下之 `/box` 與 `/boxstats`）、可自訂之 `BOT_DISPLAY_NAME` / `BOT_TAGLINE` / `SUPPORT_CONTACT` 與 `/app/data` 持久化目錄探索。
+  - `app/api.py` 新增 `/readyz` 就緒探針（檢查 MongoDB 與 Bot polling 狀態）、每 Token 滑動視窗 Rate Limit（`API_RATE_LIMIT_PER_MINUTE`，超限回傳 HTTP `429`）、請求歸因日誌與 `Cache-Control: no-store` 回應標頭。
+  - `app/services/content.py` 新增 `safe_http_get()`（人工驗證每一跳 HTTP `3xx` redirect 目標防堵 SSRF）與共用 `EXTRACTION_ERROR_MESSAGES` / `is_extraction_error()` 錯誤判斷契約。
+- **🧪 新增全方位回歸測試 (`tests/test_audit_fixes.py`)**:
+  - 新增覆蓋 `SHOW_PROCESSING=0`、`/yt2audio` 與 `/yt2text` 白名單/SSRF/錯誤訊息、純圖片拒絕、`/box` 管理員隔離、長對話不誤發 Wiki、SSRF DNS Fail-Closed/CGNAT/Redirect、Wiki 路徑穿越、`/readyz` 與 API Rate Limit、`SummaryRepository` `bot_scope` 標籤與單次標題快取之測試。
+
+### 🔄 Changed & Improved
+- **🏗️ 消滅雙入口鏡像與整合服務層 (`app/legacy.py`, `main.py`, `api.py`, `runtime.py`, `app/services/summarization.py`, `app/services/podcast.py`)**:
+  - 將根目錄 `main.py`、`api.py`、`runtime.py` 改為薄轉接 shim，消除 3,280+ 行手動同步重複碼；同步更新 `AGENTS.md` 與 `tests/test_async_boundaries.py`、`tests/test_main_runtime_guards.py`、`tests/test_decision.py`、`tests/test_runtime.py`。
+  - 統一 `app/services/summarization.py` 為 Bot 與 FastAPI 唯一共用的 `summarize()` 實作；將 SoundOn/Apple Podcast/Pocket Casts RSS 解析與下載轉錄收斂至 `app/services/podcast.py`（改為 10 分鐘 TTL 快取與 500MB 下載上限）；抽出 `_finalize_and_deliver_summary()` 與 `_handle_quick_reply_action()` 簡化 `app/legacy.py`。
+  - 統一 Groq Whisper ASR 管線至 `transcribe_local_audio()`：改用 `ffmpeg -f segment` 串流切分壓縮 MP3（免除整檔解碼 PCM 爆 RAM）、以 `requests.post` 取代 `curl` 子程序（杜絕 `/proc` 洩漏 `GROQ_API_KEY`）、支援多 Key 輪替與有界併發，並使用 `tempfile.TemporaryDirectory()` 消除 `/tmp` 併發覆蓋。
+  - 加入單次請求 `_URL_TITLE_CACHE` 與 `_YTDLP_INFO_CACHE`，消除單一 URL 重複呼叫 4 次 `yt-dlp` 與 2 次網頁抓檔；支援 PTB `PicklePersistence`（搭配 `build.sh` `-v "$PWD/data:/app/data"`）保存對話與用戶設定；統一 `auto_update_ytdlp.sh` 委託 `DEPLOY_CONFIRM=1 ./build.sh` 確保 Watchtower labels 與 GHCR 同步。
+  - 清理過時檔案：`main-andoird.py`、`scratch_test.py`、`extract_youtube_cookies.sh` 與重複之根目錄 `CHANGELOG.md`。
+
+### 🔧 Fixed
+- **🐛 修復多項功能、隱私隔離與雙審查（OMP & OpenCode）發現之 P1/P2/P3 缺陷**:
+  - **SSRF DNS Rebinding 與傳輸上限防護 (`app/services/content.py`, `app/legacy.py`)**：在 `safe_http_get()` 內新增 `_SSRFPinnedConnectionGuard`，於實際 TCP `connect` 前再次檢驗 DNS 解析 IP 並阻擋非全域位址，並加入 10MB 回應體上限與總傳輸截止時間；`/yt2audio` 與 `/yt2text` 之 `is_safe_url()` 檢查亦改為非阻塞 `run_blocking` 執行，`download_video_audio()` 失敗時自動清除殘留暫存檔；`process_user_input()` 統一正規化 `www.` 開頭網址。
+  - **Wiki 自動發布隱私與 API 驗證 (`app/services/content.py`, `app/legacy.py`, `app/services/wiki.py`)**：新增嚴格 `is_explicit_wiki_publish_request()`，日常對話包含「分析」「比較」等關鍵字不再自動公開發布至 Wiki；`publish_wiki_page()` / `append_wiki_page()` 修復路徑雙重 URL 編碼，並要求後端回傳有效非空 JSON 與真實網址/ID（移除非 JSON HTML 200 假成功與偽造 `shareUrl`）。
+  - **FastAPI 安全性與可用性強化 (`app/api.py`, `app/config.py`, `app/services/api_keys.py`, `app/repositories/summaries.py`)**：加入認證前每 IP Rate Limit（阻絕無效 Token 與 DB/flock 暴力測試）、穩定 Owner 歸因與過期桶回收、`asyncio.Semaphore` 併發上限（`API_MAX_CONCURRENT_SUMMARIES`）、`200,000` 字元請求上限、移除日誌印出隨機 Token、`/readyz` 於 Bot 尚未就緒時正確回傳 HTTP `503`、`get_mongo_client()` 補齊 `socketTimeoutMS`、`rotate_key()` 改用 Mongo 原子 Compare-And-Swap、`APIKeyManager` 統一支援 `BOT_DATA_DIR`，並強制 `SummaryRepository` 覆寫寫入 `bot_scope`。
+  - **聊天室狀態隔離與啟動韌性 (`app/legacy.py`)**：將 `conversation_history`、`chat_history` 與 `ad_hidden_*` 改存於 `context.chat_data`（各群組與私訊互不外洩），新增毀損 `bot_persistence.pkl` 啟動自動隔離備份並重建機制、`0o700` 目錄權限、`set_my_commands()` Token 遮罩與廣告提示改採跳脫 HTML。
+  - **摘要、ASR、Podcast、決策快取與腳本修正 (`app/services/summarization.py`, `app/services/llm.py`, `app/services/podcast.py`, `app/services/decision.py`, `Dockerfile`, `.dockerignore`, `build.sh`, `auto_update_ytdlp.sh`, `setup_chrome_container.sh`)**：移除破壞 `#標籤` 與程式碼的 `\#` 跳脫並攔截只有標題無內文的異常輸出；合併 `GROQ_API_KEY` 與 `GROQ_FALLBACK_KEYS` 供 ASR 與 LLM 備援使用且遮罩重試與最終失敗日誌之金鑰；強化 Office ZIP 文件（`.docx/.pptx/.xlsx/.epub`）辨識與拒絕二進位亂碼降級；收緊 Podcast 網域檢查、支援 Apple Podcast `?i=` 指定單集、拒絕 Pocket Casts 指定 UUID 遺失時錯用首集與 RSS 音訊過濾順序；為 `decision.py` 加入 24h TTL、`hash:` 優先鍵與 `Choice` 結構驗證；修正 `auto_update_ytdlp.sh` `"none"` 崩潰、`build.sh` 啟動驗證與推播錯誤失敗處理、`.dockerignore` 排除 `data/*.pkl`、`Dockerfile` 動態 `API_PORT` 健康檢查及 `example.env` / `README.md` / `SKILL.md` 同步更新。
+  - 修復 `SHOW_PROCESSING=0` 時 `/start`、`/help`、`/lang`、`/clear`、`/context`、`/adfilter`、`/model`、`/boa`、`/tarot`、`/yiyu` 因 `processing_message` 為 `None` 觸發 `AttributeError` 崩潰。
+  - 修復 `audio_transcription()` 區域變數 `chunk_size = 100 * 1000` 遮蔽全域 `CHUNK_SIZE` 的 Bug。
+  - 修復 `/yt2text` 與 `/yt2audio` 繞過 `ALLOWED_USERS` 白名單及 `/yt2text` 錯誤比對過期導致錯誤訊息被包成 `transcript.txt` 的問題。
+  - 修復 `is_safe_url()` DNS 解析失敗 Fail-Open 與漏檢 `not ip.is_global` / `host.docker.internal` 的 SSRF 漏洞，並補齊 `upload_url_to_box`、`get_web_title`、`extract_video_transcript` 及 `app/services/wiki.py` 路徑穿越與 JSON 解析防護。
+  - 修復一般長對話 (`len >= 1000`) 誤自動公開發布至 David888 Wiki、圖片上傳被當純文字摘要、`handle('boa')` 與 `set_my_commands()` 阻塞非同步事件迴圈、`.cache/ad_decisions.json` 無鎖覆寫、`413` 截斷切掉 `--- END SOURCE CONTENT ---` 邊界、`/help` 漏列 `/adfilter` 與誤列 `六角` 牌陣、HTML 郵件未跳脫及 `setup_chrome_container.sh` 未映射 `3000/5900` Port 等問題。
+  - 同步更新 `README.md`（修正未閉合圍欄、無效 `file://` 連結、環境變數表格）、`SKILL.md`、`example.env` 與 `docs/changelog.md`（補齊 `[2026-09-08]` 與 `[2026-08-28]` 遺漏標題）。
+
 ## [2026-11-19] - URL User Note (`[ DAVID888 筆記／觀點備註 ]`) & LLM Dedicated Response Section
 
 ### ✨ Added & Hardened
@@ -195,6 +228,7 @@
 - **🧪 測試與環境相容性強化 (`tests/test_content.py`)**:
   - `test_detect_file_type_markdown` 增加對本地未安裝 `magika` 輕量環境回傳 `md` 標籤之向下相容斷言。
 
+## [2026-09-08] - Google Magika AI File Detection & Local Audio ASR
 
 ### ✨ Added
 - **🧠 Google Magika 深度學習檔案內容類型識別 (`app/services/content.py`)**:
@@ -301,6 +335,7 @@
 - **單元測試全覆蓋 (`tests/test_llm.py`)**:
   - 增加 9 項新測試，涵蓋端點探索、Groq 自動備援、Google Gemini 相容性轉譯、HTTP 4xx/5xx 容錯切換、多層級連續故障轉移及使用者自選模型優先權，全測試通過率 100% (62/62)。
 
+## [2026-08-28] - Quick Reply Interactive Keyboard & Structured Summary Upgrade
 
 ### ✨ Added & Improved
 - **🎛️ 底部 Quick Reply 互動選單 (Inline Interactive Keyboard)**:

@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import os
-import re
+import tempfile
 import threading
 import time
 from typing import Any, Optional, Tuple, Union
@@ -38,28 +38,68 @@ def is_decision_ad_filter_enabled(user_pref: Optional[bool] = None) -> bool:
     return val in ("true", "1", "yes", "on")
 
 
-def _load_local_disk_cache() -> dict[str, dict[str, Any]]:
+def _load_local_disk_cache_unlocked() -> dict[str, dict[str, Any]]:
     try:
         if os.path.exists(LOCAL_CACHE_FILE):
             with open(LOCAL_CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+                return loaded if isinstance(loaded, dict) else {}
     except Exception as e:
         logger.debug(f"Failed to read local decision cache: {e}")
     return {}
 
 
+def _load_local_disk_cache() -> dict[str, dict[str, Any]]:
+    with _CACHE_LOCK:
+        return _load_local_disk_cache_unlocked()
+
+
 def _save_local_disk_cache(data: dict[str, Any]):
+    with _CACHE_LOCK:
+        tmp_path: Optional[str] = None
+        try:
+            os.makedirs(LOCAL_CACHE_DIR, exist_ok=True)
+            existing = _load_local_disk_cache_unlocked()
+            existing.update(data)
+            if len(existing) > 5000:
+                keys = list(existing.keys())[-5000:]
+                existing = {k: existing[k] for k in keys}
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=LOCAL_CACHE_DIR,
+                prefix=".ad_decisions_",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                json.dump(existing, tmp_file, ensure_ascii=False)
+                tmp_file.flush()
+            os.replace(tmp_path, LOCAL_CACHE_FILE)
+        except Exception as e:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            logger.debug(f"Failed to save local decision cache: {e}")
+
+
+_DECISION_CACHE_TTL_SECONDS = 86400  # 24h expiry for ad decision cache entries
+
+
+def _is_entry_expired(entry: Any, ts_hint: Any = None) -> bool:
+    raw_ts = None
+    if isinstance(entry, dict) and entry.get("_cached_at") is not None:
+        raw_ts = entry.get("_cached_at")
+    elif ts_hint is not None:
+        raw_ts = ts_hint
+    if raw_ts is None:
+        return False
     try:
-        os.makedirs(LOCAL_CACHE_DIR, exist_ok=True)
-        existing = _load_local_disk_cache()
-        existing.update(data)
-        if len(existing) > 5000:
-            keys = list(existing.keys())[-5000:]
-            existing = {k: existing[k] for k in keys}
-        with open(LOCAL_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(existing, f, ensure_ascii=False)
-    except Exception as e:
-        logger.debug(f"Failed to save local decision cache: {e}")
+        return (time.time() - float(raw_ts)) > _DECISION_CACHE_TTL_SECONDS
+    except Exception:
+        return False
 
 
 def get_cached_decision(
@@ -69,26 +109,32 @@ def get_cached_decision(
     with _CACHE_LOCK:
         for k in cache_keys:
             if k in _MEMORY_CACHE:
-                return _MEMORY_CACHE[k]
+                entry = _MEMORY_CACHE[k]
+                if not _is_entry_expired(entry):
+                    return entry
+                _MEMORY_CACHE.pop(k, None)
 
-    # Try MongoDB persistent storage if available
     if mongo_collection is not None:
         try:
             for k in cache_keys:
                 doc = mongo_collection.find_one({"_id": k})
                 if doc and "decision" in doc:
                     dec = doc["decision"]
+                    if _is_entry_expired(dec, doc.get("timestamp")):
+                        continue
                     with _CACHE_LOCK:
                         _MEMORY_CACHE[k] = dec
                     return dec
         except Exception as e:
             logger.debug(f"MongoDB decision cache lookup failed: {e}")
+        return None
 
-    # Try local disk cache
     disk_cache = _load_local_disk_cache()
     for k in cache_keys:
         if k in disk_cache:
             dec = disk_cache[k]
+            if _is_entry_expired(dec):
+                continue
             with _CACHE_LOCK:
                 _MEMORY_CACHE[k] = dec
             return dec
@@ -99,49 +145,51 @@ def get_cached_decision(
 def store_cached_decision(
     cache_keys: list[str], decision: dict[str, Any], mongo_collection: Any = None
 ):
-    """Store decision result into Memory, MongoDB, and Disk file."""
+    """Store decision result into Memory and MongoDB (or Disk fallback when MongoDB is absent)."""
+    dec_to_store = dict(decision)
+    dec_to_store.setdefault("_cached_at", time.time())
     with _CACHE_LOCK:
         if len(_MEMORY_CACHE) >= _MAX_MEMORY_CACHE_SIZE:
             keys_to_drop = list(_MEMORY_CACHE.keys())[:1000]
             for k in keys_to_drop:
                 _MEMORY_CACHE.pop(k, None)
         for k in cache_keys:
-            _MEMORY_CACHE[k] = decision
+            _MEMORY_CACHE[k] = dec_to_store
 
-    # Persist to MongoDB
     if mongo_collection is not None:
         try:
             for k in cache_keys:
                 mongo_collection.update_one(
                     {"_id": k},
-                    {"$set": {"_id": k, "decision": decision, "timestamp": time.time()}},
+                    {"$set": {"_id": k, "decision": dec_to_store, "timestamp": time.time()}},
                     upsert=True,
                 )
         except Exception as e:
             logger.debug(f"MongoDB decision cache save failed: {e}")
+        return
 
-    # Persist to local disk
-    _save_local_disk_cache({k: decision for k in cache_keys})
+    _save_local_disk_cache({k: dec_to_store for k in cache_keys})
 
 
 def clear_decision_cache(clear_disk: bool = True):
     """Clear memory and disk cache (useful for testing)."""
     with _CACHE_LOCK:
         _MEMORY_CACHE.clear()
-    if clear_disk and os.path.exists(LOCAL_CACHE_FILE):
-        try:
-            os.remove(LOCAL_CACHE_FILE)
-        except Exception:
-            pass
+        if clear_disk and os.path.exists(LOCAL_CACHE_FILE):
+            try:
+                os.remove(LOCAL_CACHE_FILE)
+            except Exception:
+                pass
 
 
 def call_clef_systemone(
-    text: str, timeout: float = CLEF_TIMEOUT_SECONDS
+    text: str, timeout: float | None = None
 ) -> dict[str, Any]:
-    """Call Clef System One API with automatic Primary -> Fallback failover.
+    """Call Clef System One API with automatic Primary -> Fallback failover."""
+    effective_timeout = float(os.environ.get("CLEF_TIMEOUT_SECONDS", str(CLEF_TIMEOUT_SECONDS))) if timeout is None else timeout
+    primary_url = os.environ.get("CLEF_PRIMARY_URL", PRIMARY_CLEF_URL)
+    fallback_url = os.environ.get("CLEF_FALLBACK_URL", FALLBACK_CLEF_URL)
 
-    If both fail, gracefully returns success=False without raising.
-    """
     truncated_text = text[:3000].strip()
     payload = {
         "state": {"text": truncated_text},
@@ -167,8 +215,8 @@ def call_clef_systemone(
     }
 
     endpoints = [
-        ("Primary (Clef-Flash)", PRIMARY_CLEF_URL),
-        ("Fallback (Clef-Flash-Q4)", FALLBACK_CLEF_URL),
+        ("Primary (Clef-Flash)", primary_url),
+        ("Fallback (Clef-Flash-Q4)", fallback_url),
     ]
 
     last_error = None
@@ -182,19 +230,22 @@ def call_clef_systemone(
                 endpoint,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=timeout,
+                timeout=effective_timeout,
             )
             elapsed = time.time() - start_t
             if resp.status_code == 200:
                 data = resp.json()
-                answers = data.get("answers", {})
-                classification = answers.get("classification", {})
-                choice = classification.get("choice", "normal")
+                answers = data.get("answers") if isinstance(data, dict) else None
+                classification = answers.get("classification") if isinstance(answers, dict) else None
+                if not isinstance(classification, dict) or not isinstance(classification.get("choice"), str):
+                    logger.warning("[Clef INVALID] %s returned incomplete classification payload", name)
+                    last_error = "Invalid classification schema"
+                    continue
+                choice = classification["choice"]
                 confidence = float(classification.get("confidence", 0.0))
-                probabilities = classification.get("probabilities", {})
+                probabilities = classification.get("probabilities") if isinstance(classification.get("probabilities"), dict) else {}
                 prob_ad = float(probabilities.get("ad", 0.0))
 
-                # Consider it an ad if choice is 'ad' and prob_ad >= 0.70
                 is_ad = (choice == "ad") and (prob_ad >= 0.70)
 
                 logger.info(
@@ -210,11 +261,10 @@ def call_clef_systemone(
                     "endpoint_used": endpoint,
                     "model": data.get("model", ""),
                 }
-            else:
-                logger.warning(
-                    f"[Clef FAIL] {name} returned HTTP {resp.status_code}: {resp.text[:200]}"
-                )
-                last_error = f"HTTP {resp.status_code}"
+            logger.warning(
+                f"[Clef FAIL] {name} returned HTTP {resp.status_code}: {resp.text[:200]}"
+            )
+            last_error = f"HTTP {resp.status_code}"
         except Exception as e:
             logger.warning(f"[Clef EXCEPTION] {name} failed: {e}")
             last_error = str(e)
@@ -236,51 +286,52 @@ def is_advertisement_content(
     content: Union[str, list[str]],
     url: Optional[str] = None,
     mongo_collection: Any = None,
-    timeout: float = CLEF_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> Tuple[bool, dict[str, Any]]:
-    """Determine if content is an advertisement with multi-tier caching and failover.
-
-    Returns:
-        (is_ad: bool, decision_metadata: dict)
-    """
+    """Determine if content is an advertisement with multi-tier caching and failover."""
     if isinstance(content, list):
         full_text = "\n".join(str(item) for item in content if item).strip()
     else:
         full_text = str(content or "").strip()
 
-    # Skip evaluation for very short input without URL
     if len(full_text) < 20 and not url:
         return False, {"reason": "too_short", "is_ad": False}
 
-    # Generate cache keys
-    cache_keys = []
-    if url and isinstance(url, str):
-        url_clean = url.strip()
-        cache_keys.append(f"url:{url_clean}")
-
+    # Lookup uses exact content hash when text is available so updated URLs re-evaluate;
+    # fall back to URL key only when classifying without extracted text.
+    store_keys = []
     if full_text:
         content_hash = hashlib.sha256(full_text[:4000].encode("utf-8")).hexdigest()
-        cache_keys.append(f"hash:{content_hash}")
+        store_keys.append(f"hash:{content_hash}")
 
-    # Check cache first (Memory -> MongoDB -> Disk)
-    cached = get_cached_decision(cache_keys, mongo_collection=mongo_collection)
+    if url and isinstance(url, str):
+        url_clean = url.strip()
+        if mongo_collection is not None:
+            from app.services.api_keys import get_bot_scope
+
+            url_key = f"url:{get_bot_scope()}:{url_clean}"
+        else:
+            url_key = f"url:{url_clean}"
+        store_keys.append(url_key)
+
+    lookup_keys = [store_keys[0]] if full_text else list(store_keys)
+
+    cached = get_cached_decision(lookup_keys, mongo_collection=mongo_collection)
     if cached is not None:
         logger.info(
-            f"[Clef Cache HIT] Decision hit cache for {cache_keys[0]} -> is_ad={cached.get('is_ad')}"
+            f"[Clef Cache HIT] Decision hit cache for {lookup_keys[0]} -> is_ad={cached.get('is_ad')}"
         )
         decision_copy = dict(cached)
         decision_copy["cached"] = True
         return bool(cached.get("is_ad", False)), decision_copy
 
-    # Cache miss: call Clef
     eval_text = full_text if full_text else (url or "")
     res = call_clef_systemone(eval_text, timeout=timeout)
 
     cache_id = hashlib.md5(eval_text[:1000].encode("utf-8")).hexdigest()[:12]
     res["cache_id"] = cache_id
 
-    # If call was successful, store in cache
     if res.get("success"):
-        store_cached_decision(cache_keys, res, mongo_collection=mongo_collection)
+        store_cached_decision(store_keys, res, mongo_collection=mongo_collection)
 
     return bool(res.get("is_ad", False)), res

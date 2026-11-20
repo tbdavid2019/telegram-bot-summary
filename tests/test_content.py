@@ -181,24 +181,23 @@ class TestContentHelpers(unittest.TestCase):
 
     def test_transcribe_local_audio_mocked(self):
         from unittest.mock import patch, MagicMock
-        import json
 
         mock_audio = MagicMock()
         mock_audio.__len__.return_value = 50000  # 50s
         mock_audio.__getitem__.return_value = mock_audio
 
-        mock_resp = {
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
             "text": "這是本地音訊轉錄測試",
             "segments": [
                 {"start": 0.0, "end": 2.5, "text": "這是本地音訊轉錄測試"}
             ]
         }
-        mock_result = MagicMock()
-        mock_result.stdout = json.dumps(mock_resp)
 
         with patch("pydub.AudioSegment.from_file", return_value=mock_audio), \
-             patch("subprocess.run", return_value=mock_result), \
-             patch("os.path.exists", return_value=False):
+             patch("app.services.content._split_audio_chunks_streaming", return_value=None), \
+             patch("requests.post", return_value=mock_resp):
             transcript = transcribe_local_audio("/tmp/fake_audio.mp3")
             self.assertIn("[00:00] 這是本地音訊轉錄測試", transcript)
 

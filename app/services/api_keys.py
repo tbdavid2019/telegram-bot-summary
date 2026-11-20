@@ -419,20 +419,25 @@ class APIKeyManager:
             mongo_uri = os.environ.get("MONGO_URI", "").strip()
             if mongo_uri:
                 mongo_timeout_ms = int(os.environ.get("MONGO_TIMEOUT_MS", "5000"))
-                from pymongo import MongoClient
+                from app.config import get_mongo_client
 
-                client = MongoClient(
-                    mongo_uri,
-                    serverSelectionTimeoutMS=mongo_timeout_ms,
-                    connectTimeoutMS=mongo_timeout_ms,
-                )
+                client = get_mongo_client(mongo_uri, timeout_ms=mongo_timeout_ms)
                 self._collection = client["bot_database"]["api_keys"]
                 self._ensure_indexes()
 
         if fallback_file is not None:
             self.fallback_file = fallback_file.strip()
         else:
-            self.fallback_file = os.environ.get("API_KEYS_FILE", "").strip()
+            env_file = os.environ.get("API_KEYS_FILE", "").strip()
+            if env_file:
+                self.fallback_file = env_file
+            elif self._collection is None:
+                from app.config import get_data_dir
+
+                data_dir = get_data_dir()
+                self.fallback_file = os.path.join(data_dir, "api_keys.json") if data_dir else ""
+            else:
+                self.fallback_file = ""
 
     def _ensure_indexes(self) -> None:
         if self._collection is None:
@@ -645,8 +650,13 @@ class APIKeyManager:
                 raise KeyNotFoundError("No active API key found for this user; create one first.")
             created_at = existing.get("created_at") or now_iso
             doc = self._build_record(tg_id, raw_key, created_at=created_at, rotated_at=now_iso)
-            result = self._collection.replace_one(query, dict(doc), upsert=False)
+            cas_query = dict(query)
+            if isinstance(existing.get("key_hash"), str):
+                cas_query["key_hash"] = existing["key_hash"]
+            result = self._collection.replace_one(cas_query, dict(doc), upsert=False)
             if result is not None and getattr(result, "matched_count", 1) == 0:
+                if self._collection.find_one(query) is not None:
+                    raise RuntimeError("API key was rotated concurrently; please retry.")
                 raise KeyNotFoundError("No active API key found for this user; create one first.")
         else:
             with self._lock:
@@ -708,6 +718,17 @@ class APIKeyManager:
         except Exception as exc:
             logger.debug("Best-effort last_used_at update failed: %s", exc)
 
+    @staticmethod
+    def _should_refresh_last_used(last_used_at: Any, min_interval_seconds: int = 60) -> bool:
+        if not isinstance(last_used_at, str) or not last_used_at.strip():
+            return True
+        try:
+            parsed = datetime.fromisoformat(last_used_at.strip().replace("Z", "+00:00"))
+            elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
+            return elapsed >= min_interval_seconds
+        except Exception:
+            return True
+
     def verify_key_owner(self, raw_key: str) -> str | None:
         """Authoritatively verify a raw key against storage and return its telegram_id or None."""
         if not is_candidate_dynamic_api_key(raw_key):
@@ -728,7 +749,8 @@ class APIKeyManager:
         if not tg_id:
             return None
 
-        self._update_last_used_best_effort(tg_id, candidate_hash)
+        if self._should_refresh_last_used(doc.get("last_used_at")):
+            self._update_last_used_best_effort(tg_id, candidate_hash)
         return tg_id
 
     def verify_key(self, raw_key: str, enforce_allowed_users: bool = True) -> bool:
@@ -750,6 +772,15 @@ def get_api_key_manager() -> APIKeyManager:
         return _default_manager
 
 
+def verify_user_api_key_owner(raw_key: str) -> str | None:
+    """Verify a dynamic user API key and return its allowed owner telegram_id, or None."""
+    manager = get_api_key_manager()
+    owner_id = manager.verify_key_owner(raw_key)
+    if owner_id is None or not is_telegram_user_allowed(owner_id):
+        return None
+    return owner_id
+
+
 def verify_user_api_key(raw_key: str) -> bool:
     """Verify a dynamic user API key against the default APIKeyManager and ALLOWED_USERS."""
-    return get_api_key_manager().verify_key(raw_key, enforce_allowed_users=True)
+    return verify_user_api_key_owner(raw_key) is not None

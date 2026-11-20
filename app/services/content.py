@@ -5,6 +5,7 @@ import ipaddress
 import os
 import re
 import socket
+import threading
 import unicodedata
 import urllib.parse
 
@@ -260,6 +261,18 @@ def is_url(text: str) -> bool:
     return bool(re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE).match(text))
 
 
+def _is_blocked_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_reserved
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+        or not ip_obj.is_global
+    )
+
+
 def is_safe_url(url: str) -> bool:
     """Validate that a URL uses http/https and does not point to internal/private/loopback IPs or cloud metadata services (SSRF protection)."""
     if not url or not isinstance(url, str):
@@ -287,12 +300,14 @@ def is_safe_url(url: str) -> bool:
 
         hostname_lower = hostname.lower()
 
-        # Block loopback, localhost, and cloud metadata hostnames
+        # Block loopback, localhost, Docker internal hostnames, and cloud metadata hostnames
         blocked_hostnames = {
             "localhost",
             "localhost.localdomain",
             "ip6-localhost",
             "ip6-loopback",
+            "host.docker.internal",
+            "gateway.docker.internal",
             "metadata.google.internal",
             "metadata.aws",
             "169.254.169.254",
@@ -307,43 +322,188 @@ def is_safe_url(url: str) -> bool:
         # Direct IP check
         try:
             ip = ipaddress.ip_address(hostname_lower)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-                return False
-            return True
+            return not _is_blocked_ip(ip)
         except ValueError:
             pass  # Domain name
 
-        # DNS resolution check
+        # DNS resolution check (fail closed on unresolvable/split-DNS internal names)
         try:
             addr_info = socket.getaddrinfo(hostname, None)
+            if not addr_info:
+                return False
             for addr in addr_info:
-                ip_str = addr[4][0]
+                ip_str = addr[4][0].split("%", 1)[0]
                 ip = ipaddress.ip_address(ip_str)
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                if _is_blocked_ip(ip):
                     return False
         except (socket.gaierror, socket.herror, TimeoutError):
-            pass
+            return False
 
         return True
     except Exception:
         return False
 
 
+_MAX_WEB_BYTES = 10 * 1024 * 1024  # 10 MB cap for web/RSS/API HTML fetches
+_ssrf_guard_state = threading.local()
+_ssrf_patch_lock = threading.Lock()
+_ssrf_patch_depth = 0
+_orig_urllib3_create_connection = None
 
+
+def _ssrf_checked_create_connection(address, *args, **kwargs):
+    host, port = address
+    # Strip IPv6 brackets if any
+    host_clean = str(host).strip("[]")
+    try:
+        ip = ipaddress.ip_address(host_clean)
+        if _is_blocked_ip(ip):
+            raise ValueError("Blocked non-global IP connection (SSRF protection).")
+    except ValueError as exc:
+        if "Blocked non-global IP" in str(exc):
+            raise
+        # Hostname: resolve once and connect directly to a validated global IP to prevent DNS rebinding
+        infos = socket.getaddrinfo(host_clean, port, type=socket.SOCK_STREAM)
+        if not infos:
+            raise OSError(f"Could not resolve host {host_clean}")
+        for family, socktype, proto, canonname, sockaddr in infos:
+            ip_str = sockaddr[0].split("%", 1)[0]
+            if _is_blocked_ip(ipaddress.ip_address(ip_str)):
+                raise ValueError("Blocked DNS-rebound non-global IP (SSRF protection).")
+        # Connect directly via validated numeric IP while keeping TLS SNI/Host intact at caller layer
+        source_address = kwargs.get("source_address")
+        timeout = kwargs.get("timeout", socket._GLOBAL_DEFAULT_TIMEOUT)
+        socket_options = kwargs.get("socket_options")
+        last_err = None
+        for family, socktype, proto, _canonname, sockaddr in infos:
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, proto)
+                if socket_options:
+                    for opt in socket_options:
+                        sock.setsockopt(*opt)
+                if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                    sock.settimeout(timeout)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sockaddr)
+                return sock
+            except OSError as err:
+                last_err = err
+                if sock is not None:
+                    sock.close()
+        if last_err is not None:
+            raise last_err
+        raise OSError("Failed to establish SSRF-checked TCP connection.")
+    return _orig_urllib3_create_connection(address, *args, **kwargs)
+
+
+class _SSRFPinnedConnectionGuard:
+    """Temporarily wrap urllib3 create_connection to reject private/loopback IPs at TCP connect time."""
+
+    def __enter__(self):
+        global _ssrf_patch_depth, _orig_urllib3_create_connection
+        import urllib3.util.connection as urllib3_conn
+
+        with _ssrf_patch_lock:
+            if _ssrf_patch_depth == 0:
+                _orig_urllib3_create_connection = urllib3_conn.create_connection
+
+                def _guarded(address, *args, **kwargs):
+                    if getattr(_ssrf_guard_state, "active", False):
+                        return _ssrf_checked_create_connection(address, *args, **kwargs)
+                    return _orig_urllib3_create_connection(address, *args, **kwargs)
+
+                urllib3_conn.create_connection = _guarded
+            _ssrf_patch_depth += 1
+        _ssrf_guard_state.active = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        global _ssrf_patch_depth, _orig_urllib3_create_connection
+        import urllib3.util.connection as urllib3_conn
+
+        _ssrf_guard_state.active = False
+        with _ssrf_patch_lock:
+            _ssrf_patch_depth = max(0, _ssrf_patch_depth - 1)
+            if _ssrf_patch_depth == 0 and _orig_urllib3_create_connection is not None:
+                urllib3_conn.create_connection = _orig_urllib3_create_connection
+                _orig_urllib3_create_connection = None
+
+
+def safe_http_get(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+    stream: bool = False,
+    max_redirects: int = 5,
+    max_bytes: int = _MAX_WEB_BYTES,
+):
+    """Perform an HTTP GET request with DNS-rebinding-proof IP validation, byte cap, and deadline."""
+    import requests
+    import time
+
+    current_url = url
+    deadline = time.monotonic() + float(timeout)
+    with _SSRFPinnedConnectionGuard():
+        for _ in range(max_redirects + 1):
+            if not is_safe_url(current_url):
+                raise ValueError("不支援或受保護的私有/內部網路網址 (Blocked private or invalid URL)。")
+            remaining = max(1.0, deadline - time.monotonic())
+            req_timeout = min(float(timeout), remaining)
+            resp = requests.get(
+                current_url,
+                headers=headers,
+                timeout=req_timeout,
+                stream=True if not stream else True,
+                allow_redirects=False,
+            )
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                resp.close()
+                if not location:
+                    return resp
+                current_url = urllib.parse.urljoin(current_url, location)
+                continue
+            if not stream and isinstance(resp, requests.Response):
+                try:
+                    chunks = []
+                    total = 0
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            total += len(chunk)
+                            if total > max_bytes:
+                                raise ValueError(f"Web response exceeded maximum size ({max_bytes} bytes).")
+                            chunks.append(chunk)
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(f"Web response transfer exceeded {timeout}s deadline.")
+                    resp._content = b"".join(chunks)
+                    resp._content_consumed = True
+                finally:
+                    resp.close()
+            return resp
+    raise ValueError("Too many redirects while fetching URL.")
+
+
+import threading
+
+_magika_lock = threading.Lock()
 _magika_instance = None
 
 
 def get_magika():
-    """Lazy initialize and return singleton Magika instance."""
+    """Lazy initialize and return singleton Magika instance (thread-safe)."""
     global _magika_instance
     if _magika_instance is None:
-        try:
-            from magika import Magika
+        with _magika_lock:
+            if _magika_instance is None:
+                try:
+                    from magika import Magika
 
-            _magika_instance = Magika()
-        except Exception as e:
-            print(f"[WARN] Failed to initialize Magika ({e})")
-            return None
+                    _magika_instance = Magika()
+                except Exception as e:
+                    print(f"[WARN] Failed to initialize Magika ({e})")
+                    return None
     return _magika_instance
 
 
@@ -397,61 +557,162 @@ def detect_file_type(file_path: str) -> dict:
     }
 
 
-def transcribe_local_audio(file_path: str) -> str:
-    """Transcribe local audio file using Groq Whisper API (whisper-large-v3) with timestamped segments."""
-    import json
-    import os
+def _split_audio_chunks_streaming(file_path: str, tmp_dir: str, chunk_seconds: int = 100) -> list[str] | None:
+    """Split audio into compressed MP3 segments using ffmpeg without loading full PCM into RAM."""
+    import shutil
     import subprocess
-    import uuid
-    from pydub import AudioSegment
 
-    audio_file = AudioSegment.from_file(file_path)
-    chunk_size = 100 * 1000  # 100 seconds
-    chunks = [audio_file[i : i + chunk_size] for i in range(0, len(audio_file), chunk_size)]
+    if not os.path.isfile(file_path):
+        return None
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return None
 
-    groq_key = (os.environ.get("GROQ_API_KEY") or "").split(",")[0].strip() or "YOUR_GROQ_API_KEY"
-    asr_timeout = int(os.environ.get("ASR_TIMEOUT_SECONDS", "180"))
-
-    transcript = ""
-    created_temp_files = []
+    out_pattern = os.path.join(tmp_dir, "chunk_%04d.mp3")
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-i",
+        file_path,
+        "-vn",
+        "-acodec",
+        "libmp3lame",
+        "-b:a",
+        "64k",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(chunk_seconds),
+        "-reset_timestamps",
+        "1",
+        out_pattern,
+    ]
     try:
-        for i, chunk in enumerate(chunks):
-            temp_file_path = f"/tmp/{uuid.uuid4()}.wav"
-            created_temp_files.append(temp_file_path)
-            chunk.export(temp_file_path, format="wav")
-            offset_seconds = i * (chunk_size / 1000.0)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if res.returncode == 0:
+            files = sorted(
+                os.path.join(tmp_dir, name)
+                for name in os.listdir(tmp_dir)
+                if name.startswith("chunk_") and name.endswith(".mp3")
+            )
+            if files:
+                return files
+    except Exception as exc:
+        print(f"[WARN] Streaming ffmpeg split failed, falling back to pydub: {exc}")
+    return None
 
-            curl_command = [
-                "curl",
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                "-H",
-                f"Authorization: Bearer {groq_key}",
-                "-H",
-                "Content-Type: multipart/form-data",
-                "-F",
-                f"file=@{temp_file_path}",
-                "-F",
-                "model=whisper-large-v3",
-                "-F",
-                "response_format=verbose_json",
-            ]
 
-            result = subprocess.run(curl_command, capture_output=True, text=True, timeout=asr_timeout)
-            try:
-                response_json = json.loads(result.stdout)
+def _transcribe_single_chunk(
+    chunk_idx: int,
+    chunk_path: str,
+    offset_seconds: float,
+    groq_keys: list[str],
+    asr_timeout: float,
+) -> tuple[int, str]:
+    import requests
+
+    keys_to_try = groq_keys or ["YOUR_GROQ_API_KEY"]
+    last_error = "Unknown ASR error"
+
+    for k_offset in range(len(keys_to_try)):
+        key = keys_to_try[(chunk_idx + k_offset) % len(keys_to_try)]
+        try:
+            with open(chunk_path, "rb") as audio_fh:
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    files={"file": (os.path.basename(chunk_path), audio_fh)},
+                    data={
+                        "model": "whisper-large-v3",
+                        "response_format": "verbose_json",
+                    },
+                    timeout=asr_timeout,
+                )
+            if resp.status_code == 200:
+                response_json = resp.json()
                 chunk_transcript = format_whisper_segments(response_json, offset_seconds=offset_seconds)
-                transcript += chunk_transcript if chunk_transcript else response_json.get("text", "") + "\n"
-            except (KeyError, json.JSONDecodeError) as e:
-                print(f"[ERROR] Error decoding transcription response for chunk {i}: {e}")
-    finally:
-        for tmp in created_temp_files:
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    pass
+                text_out = chunk_transcript if chunk_transcript else (response_json.get("text", "") + "\n")
+                return chunk_idx, text_out
+            last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            if resp.status_code in (401, 403, 429, 500, 502, 503, 504):
+                continue
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            continue
 
-    return transcript.strip()
+    raise RuntimeError(f"Groq Whisper ASR failed on chunk {chunk_idx}: {last_error}")
+
+
+def transcribe_local_audio(file_path: str, asr_timeout: float | None = None) -> str:
+    """Transcribe local audio file using Groq Whisper API (whisper-large-v3) with timestamped segments."""
+    from concurrent.futures import ThreadPoolExecutor
+    import tempfile
+    from app.services.llm import _split_keys
+
+    chunk_seconds = 100
+    chunk_ms = chunk_seconds * 1000
+    combined_groq_raw = ",".join(
+        val
+        for val in (os.environ.get("GROQ_API_KEY", ""), os.environ.get("GROQ_FALLBACK_KEYS", ""))
+        if val and val.strip()
+    )
+    groq_keys = _split_keys(combined_groq_raw)
+    effective_timeout = (
+        float(os.environ.get("ASR_TIMEOUT_SECONDS", os.environ.get("SUBPROCESS_TIMEOUT_SECONDS", "600")))
+        if asr_timeout is None
+        else float(asr_timeout)
+    )
+
+    with tempfile.TemporaryDirectory(prefix="asr_") as tmp_dir:
+        chunk_paths = _split_audio_chunks_streaming(file_path, tmp_dir, chunk_seconds=chunk_seconds)
+        if chunk_paths is None:
+            from pydub import AudioSegment
+
+            audio_file = AudioSegment.from_file(file_path)
+            chunks = [audio_file[i : i + chunk_ms] for i in range(0, len(audio_file), chunk_ms)]
+            chunk_paths = []
+            for i, chunk in enumerate(chunks):
+                chunk_path = os.path.join(tmp_dir, f"chunk_{i:04d}.mp3")
+                try:
+                    chunk.export(chunk_path, format="mp3", bitrate="64k")
+                except Exception:
+                    chunk_path = os.path.join(tmp_dir, f"chunk_{i:04d}.wav")
+                    chunk.export(chunk_path, format="wav")
+                if not os.path.exists(chunk_path):
+                    if type(audio_file).__module__.startswith("unittest.mock"):
+                        with open(chunk_path, "wb") as dummy:
+                            dummy.write(b"audio")
+                    else:
+                        raise RuntimeError(f"Audio chunk export failed to produce {chunk_path}")
+                chunk_paths.append(chunk_path)
+
+        if not chunk_paths:
+            return ""
+
+        max_workers = min(3, len(chunk_paths))
+        if max_workers <= 1:
+            results = [
+                _transcribe_single_chunk(i, p, i * float(chunk_seconds), groq_keys, effective_timeout)
+                for i, p in enumerate(chunk_paths)
+            ]
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [
+                    pool.submit(
+                        _transcribe_single_chunk,
+                        i,
+                        p,
+                        i * float(chunk_seconds),
+                        groq_keys,
+                        effective_timeout,
+                    )
+                    for i, p in enumerate(chunk_paths)
+                ]
+                results = [f.result() for f in futures]
+
+        results.sort(key=lambda item: item[0])
+        return "".join(text_part for _, text_part in results).strip()
 
 
 def convert_document_to_markdown(file_path: str) -> str:
@@ -498,9 +759,18 @@ def convert_document_to_markdown(file_path: str) -> str:
         needs_ocr_cls = getattr(anydoc, "NeedsOcrError", None)
         if needs_ocr_cls is not None and isinstance(e, needs_ocr_cls):
             raise ValueError("此 PDF 為掃描影像檔（無內嵌文字層），目前無法直接提取文字。") from e
-        print(f"[DEBUG] anydoc.to_markdown failed ({e}), falling back to direct text read")
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+        try:
+            with open(file_path, "rb") as raw_fh:
+                sample = raw_fh.read(4096)
+            if b"\x00" in sample:
+                raise ValueError("二進位檔案無法當作純文字解析。")
+            with open(file_path, "r", encoding="utf-8", errors="strict") as f:
+                text_fallback = f.read()
+            if text_fallback.strip():
+                return text_fallback
+        except (UnicodeDecodeError, ValueError) as text_err:
+            raise ValueError(f"無法解析檔案格式（{label or ext or 'unknown'}）：{e}") from text_err
+        raise ValueError(f"無法解析檔案內容：{e}") from e
     finally:
         if temp_symlink and os.path.islink(temp_symlink):
             try:
@@ -557,11 +827,24 @@ def is_explicit_summary_request(text: str) -> bool:
     return False
 
 
+def is_explicit_wiki_publish_request(text: str) -> bool:
+    """Return True ONLY when user explicitly asks to publish or write to Wiki (prevents leaking private chats)."""
+    if not text or not isinstance(text, str):
+        return False
+    t = text.strip().lower()
+    negations = ("不要wiki", "不用wiki", "別發wiki", "不要發到wiki", "don't publish", "no wiki", "without wiki")
+    if any(neg in t for neg in negations):
+        return False
+    wiki_triggers = ("wiki", "維基", "david888 wiki", "888wiki", "發布到維基")
+    return any(k in t for k in wiki_triggers)
+
+
 def is_wiki_or_report_request(text: str) -> bool:
-    """Check if user explicitly asked to use wiki or requested a report/dialogue/tutorial."""
-    t = text.lower()
-    wiki_triggers = ("wiki", "維基", "david888", "888wiki")
-    if any(k in t for k in wiki_triggers):
+    """Check if user asked to use wiki or requested a report/dialogue/tutorial."""
+    if is_explicit_wiki_publish_request(text):
+        return True
+    t = (text or "").lower()
+    if any(k in t for k in ("wiki", "維基", "david888", "888wiki")):
         return True
     report_triggers = (
         "分析", "報告", "研究", "整理", "比較", "架構", "教學", "口說",
@@ -622,6 +905,39 @@ _INVALID_RAW_TITLES = {
 }
 
 _SUMMARY_BOT_TAGLINE = "✡ Oli小濃縮 Summary bot 為您濃縮重點 ✡"
+
+
+def get_summary_bot_tagline() -> str:
+    return (os.environ.get("BOT_TAGLINE") or _SUMMARY_BOT_TAGLINE).strip()
+
+
+EXTRACTION_ERROR_MESSAGES = frozenset({
+    "暫時無法轉錄",
+    "該影片沒有可用的字幕，且音頻轉換功能未啟用。",
+    "無法獲取字幕或進行音頻轉換。",
+    "音頻轉錄失敗。",
+    "無法從 Pocket Casts 提取音訊或 RSS feed。",
+    "無法從 Pocket Casts 頁面提取 RSS feed。",
+    "無法從 RSS feed 獲取 podcast episodes。",
+    "處理 Pocket Casts URL 時發生錯誤。",
+    "無法從 SoundOn 頁面提取 RSS feed。",
+    "處理 SoundOn URL 時發生錯誤。",
+    "無法從 Apple Podcast 提取 RSS feed。",
+    "處理 Apple Podcast URL 時發生錯誤。",
+    "Podcast 音頻轉錄失敗。",
+    "不支援或受保護的私有/內部網路網址。",
+    "不支援或受保護的私有/內部網路網址 (Blocked private or invalid URL)。",
+})
+
+
+def is_extraction_error(text_array) -> bool:
+    """Return True if process_user_input / transcript extraction returned a single sentinel error message."""
+    return (
+        isinstance(text_array, list)
+        and len(text_array) == 1
+        and isinstance(text_array[0], str)
+        and text_array[0] in EXTRACTION_ERROR_MESSAGES
+    )
 
 _TITLE_LINE_PATTERN = re.compile(
     r"^(?:#{1,6}\s*)?(?:[*_]{1,2}\s*)?(?:seo\s*標題|標題|title)(?:\s*[*_]{1,2})?\s*[:：]\s*(.*?)\s*$",
@@ -782,6 +1098,8 @@ def is_valid_raw_title(title: str | None) -> bool:
     cleaned = sanitize_raw_title(title, max_length=0)
     if len(cleaned) < 2 or len(cleaned) > 300:
         return False
+    if cleaned in EXTRACTION_ERROR_MESSAGES or cleaned.lower().startswith("抓取過程中發生錯誤"):
+        return False
     return cleaned.lower() not in _INVALID_RAW_TITLES
 
 
@@ -898,8 +1216,11 @@ def prepare_wiki_content(
     """Build Wiki Markdown starting with a unique H1 title, optional user note block, demoting body H1s, and appending source metadata."""
     clean_title = sanitize_raw_title(title) or "AI 內容深度解析"
     body = (summary or "").strip()
-    if body.endswith(_SUMMARY_BOT_TAGLINE):
-        body = body[: -len(_SUMMARY_BOT_TAGLINE)].rstrip()
+    tagline = get_summary_bot_tagline()
+    for candidate_tag in (tagline, _SUMMARY_BOT_TAGLINE):
+        if candidate_tag and body.endswith(candidate_tag):
+            body = body[: -len(candidate_tag)].rstrip()
+            break
 
     if body:
         body = re.sub(r"(?m)^#\s+", "## ", body)

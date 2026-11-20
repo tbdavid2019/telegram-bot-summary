@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Description: Set up the required standalone Chrome headless Docker container for telegram-bot-summary
 # This provides cookies and JS challenge solving capabilities for yt-dlp.
 # Author: Antigravity
@@ -25,6 +26,8 @@ docker rm $CONTAINER_NAME 2>/dev/null || true
 docker run -d \
   --name=$CONTAINER_NAME \
   --security-opt seccomp=unconfined \
+  -p 127.0.0.1:3000:3000 \
+  -p 127.0.0.1:5900:5900 \
   -e PUID=1000 \
   -e PGID=1000 \
   -e TZ=Etc/UTC \
@@ -42,8 +45,8 @@ echo "[4/4] Setup Complete!"
 echo ""
 echo "Next Steps:"
 echo "1. The Chrome container is now running."
-echo "2. You MUST log into YouTube using VNC (Port 5900) or WebUI (Port 3000)."
-echo "   - Open your browser: http://<your_server_ip>:3000"
+echo "2. You MUST log into YouTube using VNC (127.0.0.1:5900) or WebUI (127.0.0.1:3000)."
+echo "   - Locally (or via SSH tunnel: ssh -L 3000:127.0.0.1:3000 user@server), open: http://127.0.0.1:3000"
 echo "   - Navigate to https://www.youtube.com and sign in to a Google account."
 echo "   - Play a few videos to ensure cookies/tokens are generated."
 echo "   - Close the browser tab inside the container."
