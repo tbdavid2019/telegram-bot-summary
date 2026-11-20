@@ -51,5 +51,8 @@ if ! docker ps -q -f name="^telegram-bot-summary$" | grep -q .; then
     exit 1
 fi
 
-docker push tbdavid2019/telegram-bot-summary:latest
-docker push ghcr.io/tbdavid2019/telegram-bot-summary:latest
+# Push only when explicitly requested (CI workflow handles dual-registry pushes on main)
+if [ "${PUSH_IMAGES:-0}" = "1" ]; then
+    docker push tbdavid2019/telegram-bot-summary:latest
+    docker push ghcr.io/tbdavid2019/telegram-bot-summary:latest
+fi
