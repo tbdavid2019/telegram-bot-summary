@@ -424,7 +424,7 @@ yt-dlp --cookies-from-browser chrome --cookies cookies.txt
 1. **運行 Chrome 容器**：使用 `./setup_chrome_container.sh` 啟動 `linuxserver/chromium` 並持久化 `${HOME}/chrome-data`。
 2. **Volume 即時掛載**：透過 `DEPLOY_CONFIRM=1 ./build.sh`（或指定 `CHROME_DATA_DIR`），直接掛載 Chrome Profile 與選用 `cookies.txt` 給 Bot 使用。
 
-詳細變更記錄請參閱 [Changelog](docs/changelog.md)。
+詳細變更記錄請參閱 [changelog.md](changelog.md)（或 [docs/changelog.md](docs/changelog.md)）。
 
 #### 3. 拉取 Docker 映像
 支援從 **Docker Hub** 或 **GitHub Container Registry (GHCR)** 雙來源拉取映像：

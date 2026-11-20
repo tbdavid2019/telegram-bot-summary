@@ -8,8 +8,9 @@ This document defines the strict engineering guidelines, documentation protocols
 
 Whenever you add new features, fix bugs, modify API endpoints, change dependencies, or refactor the codebase:
 
-1. **`docs/changelog.md` MUST ALWAYS BE UPDATED**:
-   - Add a new dated section: `## [YYYY-MM-DD] - Feature Title` (or append to today's date).
+1. **`changelog.md` & `docs/changelog.md` MUST ALWAYS BE UPDATED**:
+   - Use **date-based sections only** (no semantic version numbers): `## [YYYY-MM-DD] - Feature Title` (or append to today's date).
+   - Keep root `changelog.md` and `docs/changelog.md` synchronized.
    - Categorize entries into `### ✨ Added`, `### 🔄 Changed & Improved`, or `### 🔧 Fixed`.
    - Clearly document what changed, why it changed, and relevant module/service paths.
 
@@ -17,7 +18,7 @@ Whenever you add new features, fix bugs, modify API endpoints, change dependenci
    - Ensure the **Features** list, **Core/New Features** section, and **Usage / Command Reference Tables** (`/start`, `/help`, `/lang`, `/model`, `/tarot`, `/yiyu`, `/yt2audio`, `/yt2text`, `/apikey`, etc.) are 100% up to date.
    - Update environment variable descriptions in tables if `.env` keys are added or modified.
 
-3. **Never skip documentation**: Committing code without updating `docs/changelog.md` and `README.md` is strictly prohibited.
+3. **Never skip documentation**: Committing code without updating `changelog.md`, `docs/changelog.md`, and `README.md` is strictly prohibited.
 
 ---
 

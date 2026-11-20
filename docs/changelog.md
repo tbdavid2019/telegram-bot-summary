@@ -25,7 +25,7 @@
   - **Wiki 自動發布隱私與 API 驗證 (`app/services/content.py`, `app/legacy.py`, `app/services/wiki.py`)**：新增嚴格 `is_explicit_wiki_publish_request()`，日常對話包含「分析」「比較」等關鍵字不再自動公開發布至 Wiki；`publish_wiki_page()` / `append_wiki_page()` 修復路徑雙重 URL 編碼，並要求後端回傳有效非空 JSON 與真實網址/ID（移除非 JSON HTML 200 假成功與偽造 `shareUrl`）。
   - **FastAPI 安全性與可用性強化 (`app/api.py`, `app/config.py`, `app/services/api_keys.py`, `app/repositories/summaries.py`)**：加入認證前每 IP Rate Limit（阻絕無效 Token 與 DB/flock 暴力測試）、穩定 Owner 歸因與過期桶回收、`asyncio.Semaphore` 併發上限（`API_MAX_CONCURRENT_SUMMARIES`）、`200,000` 字元請求上限、移除日誌印出隨機 Token、`/readyz` 於 Bot 尚未就緒時正確回傳 HTTP `503`、`get_mongo_client()` 補齊 `socketTimeoutMS`、`rotate_key()` 改用 Mongo 原子 Compare-And-Swap、`APIKeyManager` 統一支援 `BOT_DATA_DIR`，並強制 `SummaryRepository` 覆寫寫入 `bot_scope`。
   - **聊天室狀態隔離與啟動韌性 (`app/legacy.py`)**：將 `conversation_history`、`chat_history` 與 `ad_hidden_*` 改存於 `context.chat_data`（各群組與私訊互不外洩），新增毀損 `bot_persistence.pkl` 啟動自動隔離備份並重建機制、`0o700` 目錄權限、`set_my_commands()` Token 遮罩與廣告提示改採跳脫 HTML。
-  - **摘要、ASR、Podcast、決策快取與腳本修正 (`app/services/summarization.py`, `app/services/llm.py`, `app/services/podcast.py`, `app/services/decision.py`, `Dockerfile`, `.dockerignore`, `build.sh`, `auto_update_ytdlp.sh`, `setup_chrome_container.sh`)**：移除破壞 `#標籤` 與程式碼的 `\#` 跳脫並攔截只有標題無內文的異常輸出；合併 `GROQ_API_KEY` 與 `GROQ_FALLBACK_KEYS` 供 ASR 與 LLM 備援使用且遮罩重試與最終失敗日誌之金鑰；強化 Office ZIP 文件（`.docx/.pptx/.xlsx/.epub`）辨識與拒絕二進位亂碼降級；收緊 Podcast 網域檢查、支援 Apple Podcast `?i=` 指定單集、拒絕 Pocket Casts 指定 UUID 遺失時錯用首集與 RSS 音訊過濾順序；為 `decision.py` 加入 24h TTL、`hash:` 優先鍵與 `Choice` 結構驗證；修正 `auto_update_ytdlp.sh` `"none"` 崩潰、`build.sh` 啟動驗證與推播錯誤失敗處理、`.dockerignore` 排除 `data/*.pkl`、`Dockerfile` 動態 `API_PORT` 健康檢查及 `example.env` / `README.md` / `SKILL.md` 同步更新。
+  - **摘要、ASR、Podcast、決策快取與腳本修正 (`app/services/summarization.py`, `app/services/llm.py`, `app/services/podcast.py`, `app/services/decision.py`, `Dockerfile`, `.dockerignore`, `build.sh`, `auto_update_ytdlp.sh`, `setup_chrome_container.sh`)**：移除破壞 `#標籤` 與程式碼的 `\#` 跳脫並攔截只有標題無內文的異常輸出；合併 `GROQ_API_KEY` 與 `GROQ_FALLBACK_KEYS` 供 ASR 與 LLM 備援使用且遮罩重試與最終失敗日誌之金鑰；強化 Office ZIP 文件（`.docx/.pptx/.xlsx/.epub`）辨識與拒絕二進位亂碼降級；收緊 Podcast 網域檢查、支援 Apple Podcast `?i=` 指定單集、拒絕 Pocket Casts 指定 UUID 遺失時錯用首集與 RSS 音訊過濾順序；為 `decision.py` 加入 24h TTL、`hash:` 優先鍵與 `Choice` 結構驗證；修正 `auto_update_ytdlp.sh` `"none"` 崩潰、`build.sh` 啟動驗證與 `PUSH_IMAGES=1` 控管、`.dockerignore` 排除 `data/*.pkl`、`Dockerfile` 動態 `API_PORT` 健康檢查及 `example.env` / `README.md` / `SKILL.md` / `changelog.md` 同步更新。
   - 修復 `SHOW_PROCESSING=0` 時 `/start`、`/help`、`/lang`、`/clear`、`/context`、`/adfilter`、`/model`、`/boa`、`/tarot`、`/yiyu` 因 `processing_message` 為 `None` 觸發 `AttributeError` 崩潰。
   - 修復 `audio_transcription()` 區域變數 `chunk_size = 100 * 1000` 遮蔽全域 `CHUNK_SIZE` 的 Bug。
   - 修復 `/yt2text` 與 `/yt2audio` 繞過 `ALLOWED_USERS` 白名單及 `/yt2text` 錯誤比對過期導致錯誤訊息被包成 `transcript.txt` 的問題。
@@ -485,7 +485,7 @@
 
 
 
-## 📅 最新更新 (2025-12-03)
+## [2025-12-03] - LLM Model Switching, Book of Answers & Ad Skipping
 
 ### ✨ 新功能
 
@@ -515,7 +515,7 @@
 
 ---
 
-## 📅 過往更新 (2025-11-19)
+## [2025-11-19] - Multi-Language Summary, Follow-up QA & Podcast Support
 
 ### ✨ 新功能
 
