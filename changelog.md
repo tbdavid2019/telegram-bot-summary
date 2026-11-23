@@ -13,6 +13,7 @@
   - 當單一連結擷取失敗、逾時或無法取得字幕（`NO_SUBTITLES`）時，回覆具體原因、排查代碼與處理建議，並提供互動式恢復按鈕（如 `🎙️ 改用 Whisper 音訊轉錄並摘要`、`🔄 重新嘗試抓取`、`💬 改為僅就我的文字與 AI 討論`、`❌ 略過 / 取消`）。
 - **🧪 新增完整回歸測試 (`tests/test_content.py`, `tests/test_audit_fixes.py`)**:
   - 覆蓋多連結與長文誤判防護、`summarize_batch()` 跨來源比較與共同備註、多連結意圖確認卡片與預檢跳過頻道頁、`individual` 套用共同備註至每篇，以及無字幕影片觸發 `force_audio` 救援流程。
+- **📖 文件補充 (`README.md`)**：於 `## 核心與新增功能` 補齊多連結意圖確認、YouTube 頻道／清單防呆與並發逾時保護、及互動式錯誤救援引導完整說明。
 
 ### 🔧 Fixed
 - 修復 `app/legacy.py` 原 `_evict_expired_ad_hidden()` 誤用未定義變數 `user_data` 之潛在 `NameError`，統一重構為共用 `_evict_expired_chat_items()`。
