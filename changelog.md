@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-11-23] - YouTube Channel/Playlist Guard, Explicit Rejection Diagnostics & Concurrent Queue Recovery
+
+### ✨ Added
+- **🛡️ YouTube 頻道／播放清單防呆攔截與可排查拒絕理由 (`app/services/content.py`, `app/legacy.py`)**:
+  - 新增 `get_unsupported_media_url_reason(url)`，針對 YouTube 頻道首頁（`/channel/...`、`/@...`、`/c/...`、`/user/...`）、純播放清單（`/playlist?list=...` 且無 `v=`）及非影片首頁／分類頁（`/feed/...`、`/results` 等）直接攔截，並回傳清楚的使用者提示與排查代碼（`UNSUPPORTED_YOUTUBE_CHANNEL`、`UNSUPPORTED_YOUTUBE_PLAYLIST`、`UNSUPPORTED_YOUTUBE_PAGE`）及寫入 `logger.warning`，防止 `yt-dlp` 遞迴抓取整個頻道耗盡主機記憶體與阻塞佇列；同時允許帶有單支影片 ID 的連結（如 `watch?v=...&list=...`、`youtu.be/...`、`/shorts/...`、`/live/...`）正常處理。
+  - 更新 `is_extraction_error()` 辨識診斷拒絕與逾時訊息，確保 `/yt2text` 不會將拒絕理由誤打包為 `transcript.txt`。
+
+### 🔄 Changed & Improved
+- **⚡ 啟用 Telegram 並發更新與單筆 URL 牆上時間逾時保護 (`app/legacy.py`, `app/api.py`, `example.env`, `README.md`)**:
+  - `_build_bot_application()` 啟用 `.concurrent_updates(BOT_CONCURRENT_UPDATES)`（預設 `8`）並新增 `_on_application_error` 全域更新錯誤記錄器，避免單一慢速或異常 URL 阻塞後續正常排隊訊息。
+  - `_build_ytdlp_opts()` 預設加入 `"noplaylist": True`；`is_supported_by_ytdlp()` 與 `get_video_title()` 改用 `extract_flat="in_playlist"` 及 `YTDLP_PROBE_TIMEOUT_SECONDS`（預設 `45s`），並於偵測到 `_type` 為 `playlist`/`multi_video` 時立即中止探測。
+  - `handle("summarize", ...)`、`/yt2audio`、`/yt2text` 及 FastAPI `app/api.py` 均加上 `URL_PROCESSING_TIMEOUT_SECONDS`（預設 `900s`）牆上時間逾時保護；逾時時回傳明確診斷訊息（含 `URL_PROCESSING_TIMEOUT` 排查代碼，API 回傳 HTTP `504`）並釋放後續佇列繼續執行。
+- **🧪 新增回歸測試 (`tests/test_content.py`, `tests/test_audit_fixes.py`)**:
+  - 覆蓋頻道／播放清單／首頁攔截與單支影片放行、頻道網址不觸發 `yt_dlp.YoutubeDL` 與 `scrape_text_from_url`、逾時保護後回傳 `URL_PROCESSING_TIMEOUT` 且不阻塞後續正常 URL，以及 `concurrent_updates > 1` 驗證。
+
 ## [2026-11-20] - EGM Comprehensive Security, Reliability, Architecture & Docs Overhaul
 
 ### ✨ Added

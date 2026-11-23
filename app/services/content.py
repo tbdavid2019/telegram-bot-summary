@@ -261,6 +261,83 @@ def is_url(text: str) -> bool:
     return bool(re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE).match(text))
 
 
+_YOUTUBE_COLLECTION_PREFIXES = ("/channel/", "/@", "/c/", "/user/")
+_YOUTUBE_COLLECTION_EXACT = {"/channel", "/c", "/user"}
+_YOUTUBE_SINGLE_VIDEO_PREFIXES = ("/watch", "/shorts/", "/live/", "/embed/", "/v/")
+_YOUTUBE_NON_VIDEO_PAGES = {"/", "/feed", "/results", "/gaming", "/podcasts", "/courses", "/explore", "/trending"}
+_YOUTUBE_NON_VIDEO_PREFIXES = ("/feed/", "/hashtag/", "/podcasts/", "/courses/")
+
+
+def get_unsupported_media_url_reason(url: str) -> str | None:
+    """Return a diagnostic rejection reason when url is a non-single-video channel/playlist/page URL."""
+    if not url or not isinstance(url, str):
+        return None
+    raw = url.strip()
+    if not raw:
+        return None
+
+    candidate = f"https://{raw}" if raw.lower().startswith("www.") else raw
+    try:
+        parsed = urllib.parse.urlsplit(candidate)
+    except ValueError:
+        return None
+
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if not hostname:
+        return None
+
+    is_youtu_be = hostname == "youtu.be" or hostname == "www.youtu.be"
+    is_youtube = (
+        hostname == "youtube.com"
+        or hostname.endswith(".youtube.com")
+        or hostname == "youtube-nocookie.com"
+        or hostname.endswith(".youtube-nocookie.com")
+    )
+    if not (is_youtu_be or is_youtube):
+        return None
+
+    raw_path = parsed.path or "/"
+    path_lower = raw_path.rstrip("/").lower() or "/"
+    query = urllib.parse.parse_qs(parsed.query)
+    has_video_id = bool(query.get("v") and query["v"][0].strip())
+
+    if is_youtu_be:
+        if path_lower == "/" and not has_video_id:
+            return (
+                "❌ 無法處理此 YouTube 短網址（未指定影片 ID）。\n"
+                "原因：網址僅為網域首頁，缺少具體影片代碼，請貼上完整的單支影片網址（例如 youtu.be/<影片ID>）。\n"
+                "排查代碼：UNSUPPORTED_YOUTUBE_PAGE"
+            )
+        return None
+
+    if path_lower in _YOUTUBE_COLLECTION_EXACT or path_lower.startswith(_YOUTUBE_COLLECTION_PREFIXES):
+        return (
+            "❌ 無法處理此 YouTube 頻道／創作者主頁網址（不支援批次抓取整個頻道）。\n"
+            f"原因：偵測到頻道路徑「{raw_path}」，為避免遞迴抓取大量影片導致系統阻塞與記憶體耗盡，"
+            "僅支援單支影片網址（例如 youtube.com/watch?v=...、youtu.be/...、/shorts/... 或 /live/...）。\n"
+            "排查代碼：UNSUPPORTED_YOUTUBE_CHANNEL"
+        )
+
+    is_single_video_path = any(path_lower.startswith(prefix) for prefix in _YOUTUBE_SINGLE_VIDEO_PREFIXES)
+    if path_lower == "/playlist" or ("list" in query and not has_video_id and not is_single_video_path):
+        return (
+            "❌ 無法處理此 YouTube 播放清單網址（不支援批次抓取整份清單）。\n"
+            "原因：網址僅包含播放清單參數（list）而未指定單一影片 ID（v），請改貼清單中的單支影片網址（youtube.com/watch?v=...）。\n"
+            "排查代碼：UNSUPPORTED_YOUTUBE_PLAYLIST"
+        )
+
+    if not has_video_id and (
+        path_lower in _YOUTUBE_NON_VIDEO_PAGES or path_lower.startswith(_YOUTUBE_NON_VIDEO_PREFIXES)
+    ):
+        return (
+            "❌ 無法處理此 YouTube 頁面網址（非單支影片）。\n"
+            f"原因：偵測到首頁／分類／搜尋頁路徑「{raw_path}」，請貼上具體的單支影片網址（watch?v=...、youtu.be/...、/shorts/... 或 /live/...）。\n"
+            "排查代碼：UNSUPPORTED_YOUTUBE_PAGE"
+        )
+
+    return None
+
+
 def _is_blocked_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return bool(
         ip_obj.is_private
@@ -932,11 +1009,16 @@ EXTRACTION_ERROR_MESSAGES = frozenset({
 
 def is_extraction_error(text_array) -> bool:
     """Return True if process_user_input / transcript extraction returned a single sentinel error message."""
+    if not (isinstance(text_array, list) and len(text_array) == 1 and isinstance(text_array[0], str)):
+        return False
+    msg = text_array[0]
+    if msg in EXTRACTION_ERROR_MESSAGES:
+        return True
     return (
-        isinstance(text_array, list)
-        and len(text_array) == 1
-        and isinstance(text_array[0], str)
-        and text_array[0] in EXTRACTION_ERROR_MESSAGES
+        msg.startswith("❌ 無法處理此 YouTube ")
+        or msg.startswith("⏱️ 網址處理逾時")
+        or "排查代碼：UNSUPPORTED_" in msg
+        or "排查代碼：URL_PROCESSING_TIMEOUT" in msg
     )
 
 _TITLE_LINE_PATTERN = re.compile(

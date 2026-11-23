@@ -682,6 +682,36 @@ class TestContentHelpers(unittest.TestCase):
             sys_msgs_en = mock_gpt_en.call_args[0][1]
             self.assertIn("### 💬 【Response to Your Note & Questions】", sys_msgs_en[0]["content"])
 
+    def test_get_unsupported_media_url_reason_blocks_channels_and_allows_single_videos(self):
+        from app.services.content import get_unsupported_media_url_reason, is_extraction_error
+
+        blocked_cases = [
+            ("https://www.youtube.com/channel/UCCTEGdb7XMWn123456", "UNSUPPORTED_YOUTUBE_CHANNEL"),
+            ("https://www.youtube.com/@linvo001/videos", "UNSUPPORTED_YOUTUBE_CHANNEL"),
+            ("https://www.youtube.com/c/SomeChannel", "UNSUPPORTED_YOUTUBE_CHANNEL"),
+            ("https://www.youtube.com/user/SomeUser", "UNSUPPORTED_YOUTUBE_CHANNEL"),
+            ("https://www.youtube.com/playlist?list=PL1234567890", "UNSUPPORTED_YOUTUBE_PLAYLIST"),
+            ("https://www.youtube.com/feed/subscriptions", "UNSUPPORTED_YOUTUBE_PAGE"),
+            ("https://youtu.be/", "UNSUPPORTED_YOUTUBE_PAGE"),
+        ]
+        for url, expected_code in blocked_cases:
+            reason = get_unsupported_media_url_reason(url)
+            self.assertIsNotNone(reason, f"Expected rejection for {url}")
+            self.assertIn(expected_code, reason)
+            self.assertIn("原因：", reason)
+            self.assertTrue(is_extraction_error([reason]))
+
+        allowed_cases = [
+            "https://www.youtube.com/watch?v=dWNrafD9g38",
+            "https://www.youtube.com/watch?v=pWJCEjfyUas&list=PL1234567890",
+            "https://youtu.be/dWNrafD9g38",
+            "https://www.youtube.com/shorts/abc123XYZ",
+            "https://www.youtube.com/live/xyz789",
+            "https://example.com/article",
+        ]
+        for url in allowed_cases:
+            self.assertIsNone(get_unsupported_media_url_reason(url), f"Expected allowed for {url}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -593,6 +593,9 @@ docker run -d \
 | `LLM_TIMEOUT_SECONDS` | 單次 LLM 摘要/問答呼叫的最長等待秒數 | `180` |
 | `ASR_TIMEOUT_SECONDS` | 每段 Whisper ASR 轉錄的最長等待秒數 | `600` |
 | `MEDIA_DOWNLOAD_TIMEOUT_SECONDS` | Podcast/影片音訊下載的最長等待秒數 | `900` |
+| `YTDLP_PROBE_TIMEOUT_SECONDS` | `yt-dlp` 影片資訊探測的最長等待秒數 | `45` |
+| `URL_PROCESSING_TIMEOUT_SECONDS` | 單一 URL 內容擷取／轉錄總時限（逾時自動略過並附排查代碼，避免阻塞佇列） | `900` |
+| `BOT_CONCURRENT_UPDATES` | Telegram Bot 同時併發處理之訊息上限（避免單一慢速網址阻塞後續佇列） | `8` |
 | `MONGO_TIMEOUT_MS` | MongoDB 連線逾時毫秒數 | `5000` |
 
 > 💡 *若未設定 `API_AUTH_TOKENS`，系統會在啟動時動態產生內部隨機 Token（基於安全考量不寫入日誌；正式環境請於 `.env` 設定 `API_AUTH_TOKENS` 或透過私訊 `/apikey` 產生個人金鑰）。*

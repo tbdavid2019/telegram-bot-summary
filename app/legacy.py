@@ -61,6 +61,7 @@ from app.services.content import (
     escape_prompt_boundaries,
     format_timestamp,
     format_whisper_segments,
+    get_unsupported_media_url_reason,
     is_conversation_followup,
     is_explicit_summary_request,
     is_explicit_wiki_publish_request,
@@ -158,6 +159,11 @@ WEB_REQUEST_TIMEOUT_SECONDS = float(os.environ.get("WEB_REQUEST_TIMEOUT_SECONDS"
 LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "180"))
 ASR_TIMEOUT_SECONDS = float(os.environ.get("ASR_TIMEOUT_SECONDS", os.environ.get("SUBPROCESS_TIMEOUT_SECONDS", "600")))
 MEDIA_DOWNLOAD_TIMEOUT_SECONDS = float(os.environ.get("MEDIA_DOWNLOAD_TIMEOUT_SECONDS", "900"))
+YTDLP_PROBE_TIMEOUT_SECONDS = float(os.environ.get("YTDLP_PROBE_TIMEOUT_SECONDS", "45"))
+URL_PROCESSING_TIMEOUT_SECONDS = float(
+    os.environ.get("URL_PROCESSING_TIMEOUT_SECONDS", str(int(max(ASR_TIMEOUT_SECONDS, MEDIA_DOWNLOAD_TIMEOUT_SECONDS))))
+)
+BOT_CONCURRENT_UPDATES = max(2, int(os.environ.get("BOT_CONCURRENT_UPDATES", "8")))
 MONGO_TIMEOUT_MS = int(os.environ.get("MONGO_TIMEOUT_MS", "5000"))
 
 # LLM 設定
@@ -446,6 +452,7 @@ def _build_ytdlp_opts(tmp_dir: str | None = None, **overrides) -> dict:
         "extractor_args": {"youtube": {"player_client": ["default,-web_safari"]}},
         "force_ipv4": True,
         "geo_bypass": True,
+        "noplaylist": True,
         "socket_timeout": MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
         **get_ytdlp_cookie_opts(tmp_dir=tmp_dir),
     }
@@ -471,6 +478,15 @@ def _cleanup_temp_cookie(ydl_opts: dict, tmp_dir: str | None = None) -> None:
 def is_supported_by_ytdlp(url):
     """檢測 URL 是否被 yt-dlp 支援的影片網站，並快取 metadata 供後續步驟複用。"""
     if not is_safe_url(url):
+        return False
+
+    unsupported_reason = get_unsupported_media_url_reason(url)
+    if unsupported_reason:
+        logger.warning(
+            "yt-dlp probe skipped for unsupported collection/page URL %s: %s",
+            url,
+            unsupported_reason.replace("\n", " | "),
+        )
         return False
 
     video_site_patterns = [
@@ -503,7 +519,13 @@ def is_supported_by_ytdlp(url):
         info = cached_info
     else:
         with tempfile.TemporaryDirectory(prefix="yt_probe_") as tmp_dir:
-            ydl_opts = _build_ytdlp_opts(tmp_dir=tmp_dir, quiet=True, no_warnings=True)
+            ydl_opts = _build_ytdlp_opts(
+                tmp_dir=tmp_dir,
+                quiet=True,
+                no_warnings=True,
+                extract_flat="in_playlist",
+                socket_timeout=min(MEDIA_DOWNLOAD_TIMEOUT_SECONDS, YTDLP_PROBE_TIMEOUT_SECONDS),
+            )
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
@@ -514,6 +536,9 @@ def is_supported_by_ytdlp(url):
                 return True
 
     if info:
+        if info.get("_type") in ("playlist", "multi_video") or ("entries" in info and not info.get("formats")):
+            logger.warning("yt-dlp resolved %s to a playlist/channel collection; refusing batch probe.", url)
+            return False
         video_indicators = ("formats", "duration", "view_count", "like_count", "upload_date", "uploader")
         if info.get("formats") or info.get("duration", 0) > 0 or any(k in info for k in video_indicators):
             return True
@@ -532,6 +557,8 @@ def extract_video_transcript(video_url):
     """提取影片字幕（含 SSRF 檢查與隔離暫存目錄）。"""
     if not is_safe_url(video_url):
         return "unsafe_url"
+    if get_unsupported_media_url_reason(video_url):
+        return "error"
 
     with tempfile.TemporaryDirectory(prefix="subs_") as tmp_dir:
         ydl_opts = _build_ytdlp_opts(
@@ -571,6 +598,9 @@ def audio_transcription(video_url):
     """下載影片音訊並使用統一 Groq Whisper ASR 管線轉錄（修復 chunk_size 遮蔽與平行安全）。"""
     if not is_safe_url(video_url):
         return ["不支援或受保護的私有/內部網路網址。"]
+    unsupported_reason = get_unsupported_media_url_reason(video_url)
+    if unsupported_reason:
+        return [unsupported_reason]
     try:
         with tempfile.TemporaryDirectory(prefix="yt_audio_") as tmp_dir:
             ydl_opts = _build_ytdlp_opts(
@@ -598,9 +628,17 @@ def audio_transcription(video_url):
 
 
 def retrieve_video_transcript_from_url(video_url):
-    """通用的影片字幕轉文字函數，含 SSRF 檢查。"""
+    """通用的影片字幕轉文字函數，含 SSRF 與頻道/清單網址檢查。"""
     if not is_safe_url(video_url):
         return ["不支援或受保護的私有/內部網路網址。"]
+    unsupported_reason = get_unsupported_media_url_reason(video_url)
+    if unsupported_reason:
+        logger.warning(
+            "Rejected unsupported media URL in retrieve_video_transcript_from_url (%s): %s",
+            video_url,
+            unsupported_reason.replace("\n", " | "),
+        )
+        return [unsupported_reason]
     try:
         subtitle_content = extract_video_transcript(video_url)
         if subtitle_content == "unsafe_url":
@@ -710,6 +748,14 @@ def download_video_audio(url):
     """Download and convert audio synchronously; callers must offload and delete the returned file."""
     if not is_safe_url(url):
         raise ValueError("Unsafe or invalid URL provided.")
+    unsupported_reason = get_unsupported_media_url_reason(url)
+    if unsupported_reason:
+        logger.warning(
+            "Rejected unsupported media URL in download_video_audio (%s): %s",
+            url,
+            unsupported_reason.replace("\n", " | "),
+        )
+        raise ValueError(unsupported_reason)
     temp_uuid = str(uuid.uuid4())
     tmp_base = os.path.join(tempfile.gettempdir(), temp_uuid)
     ydl_opts = _build_ytdlp_opts(
@@ -740,13 +786,21 @@ def get_video_title(video_url, localize=True):
     """使用 yt-dlp 提取影片標題（複用快取避免重複探測）。"""
     if not is_safe_url(video_url):
         return "影片"
+    if get_unsupported_media_url_reason(video_url):
+        return "不支援的頻道或清單網址"
     cached_info = _get_cached_ytdlp_info(video_url)
     if cached_info and cached_info.get("title"):
         raw_title = cached_info["title"]
         return localize_title(raw_title) if localize else raw_title
     try:
         with tempfile.TemporaryDirectory(prefix="yt_title_") as tmp_dir:
-            ydl_opts = _build_ytdlp_opts(tmp_dir=tmp_dir, quiet=True, no_warnings=True)
+            ydl_opts = _build_ytdlp_opts(
+                tmp_dir=tmp_dir,
+                quiet=True,
+                no_warnings=True,
+                extract_flat="in_playlist",
+                socket_timeout=min(MEDIA_DOWNLOAD_TIMEOUT_SECONDS, YTDLP_PROBE_TIMEOUT_SECONDS),
+            )
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
                 if info:
@@ -762,6 +816,8 @@ def get_web_title(user_input, localize=True):
     """提取 URL 標題（含 SSRF 檢查與單次請求快取複用）。"""
     if not is_safe_url(user_input):
         return "不支援或受保護的私有/內部網路網址。"
+    if get_unsupported_media_url_reason(user_input):
+        return "不支援的頻道或清單網址"
 
     cached = _get_cached_title(user_input)
     if cached:
@@ -807,7 +863,16 @@ def process_user_input(user_input):
     url_pattern = re.compile(r"https?://", re.IGNORECASE)
     if url_pattern.match(user_input):
         if not is_safe_url(user_input):
+            logger.warning("Blocked unsafe/internal URL: %s", user_input)
             return [], "不支援或受保護的私有/內部網路網址 (Blocked private or invalid URL)。"
+        unsupported_reason = get_unsupported_media_url_reason(user_input)
+        if unsupported_reason:
+            logger.warning(
+                "Rejected unsupported collection/page URL %s: %s",
+                user_input,
+                unsupported_reason.replace("\n", " | "),
+            )
+            return [], unsupported_reason
         if is_pocketcasts_url(user_input):
             return process_pocketcasts_url(user_input)
         if is_soundon_url(user_input):
@@ -1205,6 +1270,17 @@ async def handle_yt2audio(update, context):
     if not await run_blocking(is_safe_url, url):
         await context.bot.send_message(chat_id=chat_id, text="不支援或受保護的私有/內部網路網址。")
         return
+    unsupported_reason = get_unsupported_media_url_reason(url)
+    if unsupported_reason:
+        logger.warning(
+            "Rejected /yt2audio unsupported URL (chat_id=%s, user_id=%s, url=%s): %s",
+            chat_id,
+            user_id,
+            url,
+            unsupported_reason.replace("\n", " | "),
+        )
+        await context.bot.send_message(chat_id=chat_id, text=unsupported_reason)
+        return
 
     processing_message = None
     if show_processing:
@@ -1212,13 +1288,31 @@ async def handle_yt2audio(update, context):
 
     output_path = None
     try:
-        output_path = await run_blocking(download_video_audio, url)
+        async def _download_audio():
+            return await run_blocking(download_video_audio, url)
+
+        output_path = await asyncio.wait_for(_download_audio(), timeout=URL_PROCESSING_TIMEOUT_SECONDS)
         with open(output_path, "rb") as audio:
             await context.bot.send_audio(chat_id=chat_id, audio=audio)
         await _delete_msg(context.bot, chat_id, processing_message)
+    except TimeoutError:
+        logger.warning(
+            "Timeout in handle_yt2audio after %.0fs (chat_id=%s, user_id=%s, url=%s)",
+            URL_PROCESSING_TIMEOUT_SECONDS,
+            chat_id,
+            user_id,
+            url,
+        )
+        await _reply_or_edit(
+            context.bot,
+            chat_id,
+            processing_message,
+            f"⏱️ 音訊下載逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成），已略過此請求。\n排查代碼：URL_PROCESSING_TIMEOUT",
+        )
     except Exception as e:
-        logger.warning("Error in handle_yt2audio: %s", e)
-        await _reply_or_edit(context.bot, chat_id, processing_message, "下載或傳送音頻失敗。請檢查輸入的影片 URL 是否正確。")
+        logger.warning("Error in handle_yt2audio (url=%s): %s", url, e, exc_info=True)
+        err_msg = str(e) if isinstance(e, ValueError) and "排查代碼：" in str(e) else "下載或傳送音頻失敗。請檢查輸入的影片 URL 是否正確（若為頻道或播放清單網址請改貼單支影片 URL）。"
+        await _reply_or_edit(context.bot, chat_id, processing_message, err_msg)
     finally:
         if output_path and os.path.exists(output_path):
             try:
@@ -1243,13 +1337,27 @@ async def handle_yt2text(update, context):
     if not await run_blocking(is_safe_url, url):
         await context.bot.send_message(chat_id=chat_id, text="不支援或受保護的私有/內部網路網址。")
         return
+    unsupported_reason = get_unsupported_media_url_reason(url)
+    if unsupported_reason:
+        logger.warning(
+            "Rejected /yt2text unsupported URL (chat_id=%s, user_id=%s, url=%s): %s",
+            chat_id,
+            user_id,
+            url,
+            unsupported_reason.replace("\n", " | "),
+        )
+        await context.bot.send_message(chat_id=chat_id, text=unsupported_reason)
+        return
 
     processing_message = None
     if show_processing:
         processing_message = await context.bot.send_message(chat_id=chat_id, text="處理中，請稍候...")
 
     try:
-        output_chunks = await run_blocking(retrieve_video_transcript_from_url, url)
+        async def _extract_transcript():
+            return await run_blocking(retrieve_video_transcript_from_url, url)
+
+        output_chunks = await asyncio.wait_for(_extract_transcript(), timeout=URL_PROCESSING_TIMEOUT_SECONDS)
 
         if is_extraction_error(output_chunks):
             await _reply_or_edit(context.bot, chat_id, processing_message, output_chunks[0])
@@ -1263,9 +1371,23 @@ async def handle_yt2text(update, context):
         bio.name = "transcript.txt"
         await _delete_msg(context.bot, chat_id, processing_message)
         await context.bot.send_document(chat_id=chat_id, document=bio, filename="transcript.txt")
+    except TimeoutError:
+        logger.warning(
+            "Timeout in handle_yt2text after %.0fs (chat_id=%s, user_id=%s, url=%s)",
+            URL_PROCESSING_TIMEOUT_SECONDS,
+            chat_id,
+            user_id,
+            url,
+        )
+        await _reply_or_edit(
+            context.bot,
+            chat_id,
+            processing_message,
+            f"⏱️ 影片轉文字逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成），已略過此請求。\n排查代碼：URL_PROCESSING_TIMEOUT",
+        )
     except Exception as e:
-        logger.warning("Error in handle_yt2text: %s", e)
-        await _reply_or_edit(context.bot, chat_id, processing_message, "下載或轉換文本失敗。請檢查輸入的影片 URL 是否正確。")
+        logger.warning("Error in handle_yt2text (url=%s): %s", url, e, exc_info=True)
+        await _reply_or_edit(context.bot, chat_id, processing_message, "下載或轉換文本失敗。請檢查輸入的影片 URL 是否正確（若為頻道或播放清單網址請改貼單支影片 URL）。")
 
 
 async def handle_button_click(update, context):
@@ -2058,16 +2180,54 @@ async def handle(action, update, context):
 
                 if extracted_url:
                     user_input = extracted_url
-                text_array = await run_blocking(process_user_input, user_input)
+
+                async def _extract_input():
+                    return await run_blocking(process_user_input, user_input)
+
+                try:
+                    text_array = await asyncio.wait_for(_extract_input(), timeout=URL_PROCESSING_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    logger.warning(
+                        "URL/content extraction timed out after %.0fs (chat_id=%s, user_id=%s, input=%s)",
+                        URL_PROCESSING_TIMEOUT_SECONDS,
+                        chat_id,
+                        user_id,
+                        user_input,
+                    )
+                    await _reply_or_edit(
+                        context.bot,
+                        chat_id,
+                        processing_message,
+                        (
+                            f"⏱️ 網址處理逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成），已略過此項目以避免阻塞後續排隊訊息。\n"
+                            "原因：來源網站回應過慢或媒體檔案過大無法於時限內擷取。\n"
+                            "排查代碼：URL_PROCESSING_TIMEOUT"
+                        ),
+                    )
+                    return
 
                 if isinstance(text_array, tuple):
                     if len(text_array) == 2 and not text_array[0]:
+                        logger.info(
+                            "Content extraction rejected/failed (chat_id=%s, user_id=%s, input=%s): %s",
+                            chat_id,
+                            user_id,
+                            user_input,
+                            str(text_array[1]).replace("\n", " | "),
+                        )
                         await _delete_msg(context.bot, chat_id, processing_message)
                         await context.bot.send_message(chat_id=chat_id, text=text_array[1])
                         return
                     text_array = text_array[0]
 
                 if is_extraction_error(text_array):
+                    logger.info(
+                        "Content extraction sentinel error (chat_id=%s, user_id=%s, input=%s): %s",
+                        chat_id,
+                        user_id,
+                        user_input,
+                        str(text_array[0]).replace("\n", " | "),
+                    )
                     await _delete_msg(context.bot, chat_id, processing_message)
                     await context.bot.send_message(chat_id=chat_id, text=text_array[0])
                     return
@@ -2287,8 +2447,18 @@ def _resolve_persistence_path() -> str:
     return ""
 
 
+async def _on_application_error(update, context) -> None:
+    """Log unhandled Telegram update errors with update context so polling continues cleanly."""
+    logger.error(
+        "Unhandled error while processing Telegram update %s: %s",
+        getattr(update, "update_id", "unknown"),
+        getattr(context, "error", "unknown"),
+        exc_info=getattr(context, "error", None),
+    )
+
+
 def _build_bot_application(persistence_path: str = ""):
-    builder = ApplicationBuilder().token(telegram_token)
+    builder = ApplicationBuilder().token(telegram_token).concurrent_updates(BOT_CONCURRENT_UPDATES)
     if persistence_path:
         try:
             parent_dir = os.path.dirname(os.path.abspath(persistence_path))
@@ -2322,6 +2492,7 @@ def _build_bot_application(persistence_path: str = ""):
     application.add_handler(CommandHandler("yt2text", handle_yt2text))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_summarize))
     application.add_handler(CallbackQueryHandler(handle_button_click))
+    application.add_error_handler(_on_application_error)
     return application
 
 

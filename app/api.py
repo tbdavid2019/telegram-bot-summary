@@ -288,7 +288,19 @@ async def api_summarize(request: SummarizeRequest, http_request: Request, token:
                 detail="Server busy processing concurrent summarization requests; please retry shortly.",
             )
         try:
-            text_array = await run_blocking(process_user_input, user_input)
+            url_timeout = float(getattr(legacy_mod, "URL_PROCESSING_TIMEOUT_SECONDS", 900.0))
+
+            async def _extract_api_input():
+                return await run_blocking(process_user_input, user_input)
+
+            try:
+                text_array = await asyncio.wait_for(_extract_api_input(), timeout=url_timeout)
+            except TimeoutError:
+                logger.warning("API content extraction timed out after %.0fs for actor=%s", url_timeout, actor_id)
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=f"Content extraction timed out after {int(url_timeout)}s (URL_PROCESSING_TIMEOUT).",
+                )
 
             if isinstance(text_array, tuple):
                 if len(text_array) == 2 and not text_array[0]:

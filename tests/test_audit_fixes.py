@@ -325,6 +325,74 @@ class AuditFixesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(title, "Cached Title")
         mock_get.assert_not_called()
 
+    async def test_youtube_channel_rejected_with_reason_and_queue_continues(self):
+        import asyncio
+        import app.legacy as legacy
+
+        channel_url = "https://www.youtube.com/channel/UCCTEGdb7XMWn123456"
+        with (
+            patch.object(legacy, "is_safe_url", return_value=True),
+            patch("app.legacy.yt_dlp.YoutubeDL") as mock_ydl,
+            patch.object(legacy, "scrape_text_from_url") as mock_scrape,
+        ):
+            res = legacy.process_user_input(channel_url)
+            self.assertIsInstance(res, tuple)
+            self.assertEqual(res[0], [])
+            self.assertIn("UNSUPPORTED_YOUTUBE_CHANNEL", res[1])
+            self.assertIn("原因：", res[1])
+            self.assertFalse(legacy.is_supported_by_ytdlp(channel_url))
+            mock_ydl.assert_not_called()
+            mock_scrape.assert_not_called()
+
+        # Verify timeout on one stalled URL returns explicit diagnostic reason and doesn't block subsequent URLs
+        bot_mock = MagicMock()
+        bot_mock.send_message = AsyncMock()
+        bot_mock.edit_message_text = AsyncMock()
+        bot_mock.delete_message = AsyncMock()
+        ctx = SimpleNamespace(bot=bot_mock, user_data={}, chat_data={})
+
+        stalled_upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            message=SimpleNamespace(text="https://example.com/slow-url"),
+        )
+        good_upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            message=SimpleNamespace(text="https://www.youtube.com/watch?v=dWNrafD9g38"),
+        )
+
+        async def _fake_run_blocking(fn, *args, **kwargs):
+            if fn is legacy.process_user_input and args and args[0] == "https://example.com/slow-url":
+                await asyncio.sleep(0.2)
+                return ["late"]
+            if fn is legacy.process_user_input:
+                return ["正常的影片字幕內容"]
+            if fn is legacy.get_web_title:
+                return "地球上的水究竟是哪來的？"
+            return fn(*args, **kwargs)
+
+        with (
+            patch.object(legacy, "show_processing", 0),
+            patch.object(legacy, "allowed_users", ""),
+            patch.object(legacy, "URL_PROCESSING_TIMEOUT_SECONDS", 0.05),
+            patch.object(legacy, "run_blocking", side_effect=_fake_run_blocking),
+            patch.object(legacy, "is_decision_ad_filter_enabled", return_value=False),
+            patch.object(legacy, "_finalize_and_deliver_summary", new=AsyncMock()) as mock_deliver,
+        ):
+            await legacy.handle("summarize", stalled_upd, ctx)
+            timeout_msg = bot_mock.send_message.call_args.kwargs["text"]
+            self.assertIn("URL_PROCESSING_TIMEOUT", timeout_msg)
+
+            await legacy.handle("summarize", good_upd, ctx)
+            mock_deliver.assert_awaited_once()
+
+    def test_bot_application_enables_concurrent_updates(self):
+        import app.legacy as legacy
+
+        app = legacy._build_bot_application("")
+        self.assertGreater(app.concurrent_updates, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
