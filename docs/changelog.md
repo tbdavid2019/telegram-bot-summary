@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-11-23] - Multi-URL Intent Confirmation, Cross-Source Synthesis & Interactive Error Recovery
+
+### ✨ Added
+- **🧠 多連結智慧意圖確認與跨來源整合 (`app/services/content.py`, `app/services/summarization.py`, `app/legacy.py`)**:
+  - 新增 `parse_urls_and_user_note()`（支援單則訊息抽出最多 10 筆去重 URL 與共用 `user_note`，並保留長文章內嵌連結保護；1 個 URL 時維持直接處理＋`[ DAVID888 筆記／觀點備註 ]` 不打擾體驗）。
+  - 當偵測到 2 個以上有效 URL 時，先執行靜態安全／頻道預檢，再以 Inline Keyboard 主動詢問使用者意圖：
+    - `📑 個別逐篇處理`：依序處理所有有效連結並將共同備註套用至每一篇；單筆失敗時回報原因與建議並繼續處理後續連結，最後提供重試失敗項目按鈕。
+    - `🧩 整合成單篇綜合重點` / `⚖️ 跨來源比較差異`：新增 `build_batch_combined_text()` 與 `summarize_batch()`，支援等比例字數預算保護與來源出處標註；若部分連結擷取失敗，會主動詢問「僅用成功項目繼續／重試失敗項目／改為個別摘要／取消」。
+    - `📄 僅批次轉逐字稿 (.txt)`：批次輸出純文字／逐字稿檔案。
+- **🛟 互動式錯誤引導與救援機制 (`classify_extraction_failure`, `app/legacy.py`)**:
+  - 當單一連結擷取失敗、逾時或無法取得字幕（`NO_SUBTITLES`）時，回覆具體原因、排查代碼與處理建議，並提供互動式恢復按鈕（如 `🎙️ 改用 Whisper 音訊轉錄並摘要`、`🔄 重新嘗試抓取`、`💬 改為僅就我的文字與 AI 討論`、`❌ 略過 / 取消`）。
+- **🧪 新增完整回歸測試 (`tests/test_content.py`, `tests/test_audit_fixes.py`)**:
+  - 覆蓋多連結與長文誤判防護、`summarize_batch()` 跨來源比較與共同備註、多連結意圖確認卡片與預檢跳過頻道頁、`individual` 套用共同備註至每篇，以及無字幕影片觸發 `force_audio` 救援流程。
+
+### 🔧 Fixed
+- 修復 `app/legacy.py` 原 `_evict_expired_ad_hidden()` 誤用未定義變數 `user_data` 之潛在 `NameError`，統一重構為共用 `_evict_expired_chat_items()`。
+
 ## [2026-11-23] - YouTube Channel/Playlist Guard, Explicit Rejection Diagnostics & Concurrent Queue Recovery
 
 ### ✨ Added

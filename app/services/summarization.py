@@ -7,6 +7,7 @@ from typing import Optional
 from app.config import Settings, get_bot_tagline, get_support_contact
 from app.services.content import (
     _TITLE_LINE_PATTERN,
+    build_batch_combined_text,
     escape_prompt_boundaries,
     extract_title_from_summary,
     is_valid_raw_title,
@@ -196,3 +197,71 @@ def summarize(
         print(f"Error: {e}")
         err_msg = f"Unknown error! Please contact {get_support_contact()}."
         return (err_msg, None) if return_title else err_msg
+
+
+def summarize_batch(
+    sources: list[dict],
+    mode: str = "digest",
+    *,
+    language: str = "zh-TW",
+    selected_model: Optional[str] = None,
+    settings: Optional[Settings] = None,
+    user_note: Optional[str] = None,
+    gpt_caller=None,
+) -> tuple[str, Optional[str]]:
+    """Synthesize or compare multiple extracted URL sources into a single structured report."""
+    combined_chunks = build_batch_combined_text(sources)
+    if not combined_chunks:
+        return "⚠️ 摘要生成失敗：無可用的來源內容可供整合。", None
+
+    is_compare = mode == "compare"
+    clean_note = (
+        escape_prompt_boundaries(user_note.strip()[:4000])
+        if isinstance(user_note, str) and user_note.strip()
+        else ""
+    )
+
+    if language == "en":
+        task_desc = (
+            "cross-source comparison and contrast analysis (highlighting shared consensus, key differences/tensions, strengths/blind spots of each source, and which source fits which reader)"
+            if is_compare
+            else "cross-source comprehensive synthesis (integrating all sources into unified core takeaways, per-source highlights, and an overall conclusion)"
+        )
+        note_rule = (
+            "\nAfter `TITLE: ...` and before `### ⓵`, include `### 💬 【Response to Your Note & Questions】` directly answering the user's note across all sources, followed by `---`."
+            if clean_note
+            else ""
+        )
+        batch_prompt = (
+            "First output `TITLE: Your Engaging SEO Title` on the very first line (50-70 chars, natural English).\n"
+            f"You are given {len(sources)} distinct sources (`【來源 1】`..`【來源 {len(sources)}】`). "
+            f"Produce a {task_desc} in Markdown.{note_rule}\n"
+            "Use clear numbered sections (`### ⓵` .. `### ⓹`, `### 💡 【Suggested Follow-ups】`, `### ⓺ 【Hashtags】`), explicitly citing `[Source 1]`, `[Source 2]`, etc. when attributing facts."
+        )
+    else:
+        task_desc = (
+            "跨來源觀點比較與差異深度分析（清楚對比各來源的核心立場、共識交集、分歧／衝突點、各自的證據強弱與適用情境）"
+            if is_compare
+            else "跨來源單篇綜合重點整理（將多篇來源的重複資訊去冗存菁，融合成共同主軸、各來源獨特亮點與最終結論）"
+        )
+        note_rule = (
+            "\n請務必在第一行 `TITLE: ...` 之後、`### ⓵` 之前，新增 `### 💬 【針對筆記與疑問回應】`，結合所有來源的具體內容與差異直接回應使用者的備註或提問，並以 `---` 區隔。"
+            if clean_note
+            else ""
+        )
+        batch_prompt = (
+            "第一步：必須在回覆最第一行輸出台灣繁體中文 SEO 標題：`TITLE: 你的標題`（22～34字，專業深度＋好奇心反差）。\n"
+            f"以下提供 {len(sources)} 份獨立來源（標記為 `【來源 1】`～`【來源 {len(sources)}】`），請以台灣繁體中文與 Markdown 排版完成「{task_desc}」。{note_rule}\n"
+            "結構請包含：`### ⓵ 【容易懂 Easy Know】`、`### ⓶ 【總結與跨來源主軸】`、`### ⓷ 【各來源亮點與觀點對照】`、`### ⓸ 【關鍵重點與數據 Key Points】`、`### 💡 【推薦延伸續問】`、`### ⓺ 【關鍵標籤 Hashtags】`，並在引用論點時清楚標註 `[來源 1]`、`[來源 2]` 等出處。"
+        )
+
+    return summarize(
+        combined_chunks,
+        system_prompt=batch_prompt,
+        settings=settings,
+        selected_model=selected_model,
+        language=language,
+        return_title=True,
+        user_note=clean_note or None,
+        gpt_caller=gpt_caller,
+    )

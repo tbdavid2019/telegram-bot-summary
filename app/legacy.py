@@ -55,6 +55,7 @@ from app.services.box import (
 from app.services.content import (
     EXTRACTION_ERROR_MESSAGES,
     _split_markdown_safely,
+    classify_extraction_failure,
     compose_summary_with_source,
     convert_document_to_markdown,
     detect_file_type,
@@ -74,6 +75,7 @@ from app.services.content import (
     localize_title,
     needs_title_localization,
     parse_url_and_user_note,
+    parse_urls_and_user_note,
     prepare_wiki_content,
     resolve_final_title,
     safe_http_get,
@@ -130,6 +132,7 @@ from app.services.summarization import (
     SYSTEM_PROMPT_ZH,
     call_gpt_api as _service_call_gpt_api,
     summarize as _service_summarize,
+    summarize_batch as _service_summarize_batch,
 )
 from app.services.telegram_delivery import (
     format_for_telegram,
@@ -916,19 +919,139 @@ def _get_chat_state(context) -> dict:
     return context.user_data
 
 
-def _evict_expired_ad_hidden(chat_state: dict) -> None:
+def _evict_expired_chat_items(
+    chat_state: dict,
+    prefix: str,
+    ttl: float = _AD_HIDDEN_TTL_SECONDS,
+    max_items: int = _MAX_AD_HIDDEN_ITEMS,
+) -> None:
+    """Evict expired or excess transient entries with the given prefix from chat_state."""
     now = time.time()
-    ad_keys = [k for k in chat_state if k.startswith("ad_hidden_")]
-    for k in ad_keys:
+    keys = [k for k in chat_state if k.startswith(prefix)]
+    for k in keys:
         val = chat_state.get(k)
-        if isinstance(val, dict) and (now - float(val.get("created_at", now))) > _AD_HIDDEN_TTL_SECONDS:
+        if isinstance(val, dict) and (now - float(val.get("created_at", now))) > ttl:
             chat_state.pop(k, None)
-            user_data.pop(k, None)
-    remaining = [k for k in user_data if k.startswith("ad_hidden_")]
-    if len(remaining) > _MAX_AD_HIDDEN_ITEMS:
-        remaining.sort(key=lambda k: float(user_data[k].get("created_at", 0.0)) if isinstance(user_data.get(k), dict) else 0.0)
-        for k in remaining[: len(remaining) - _MAX_AD_HIDDEN_ITEMS]:
-            user_data.pop(k, None)
+    remaining = [k for k in chat_state if k.startswith(prefix)]
+    if len(remaining) > max_items:
+        remaining.sort(key=lambda k: float(chat_state[k].get("created_at", 0.0)) if isinstance(chat_state.get(k), dict) else 0.0)
+        for k in remaining[: len(remaining) - max_items]:
+            chat_state.pop(k, None)
+
+
+def _evict_expired_ad_hidden(chat_state: dict) -> None:
+    _evict_expired_chat_items(chat_state, "ad_hidden_")
+
+
+def _preflight_check_urls(urls: list[str]) -> tuple[list[str], list[dict]]:
+    """Run SSRF and channel/playlist validation on candidate URLs before processing."""
+    valid_urls: list[str] = []
+    rejected_items: list[dict] = []
+    for url in urls:
+        if not is_safe_url(url):
+            reason = "不支援或受保護的私有/內部網路網址 (Blocked private or invalid URL)。"
+            info = classify_extraction_failure(url, reason)
+            rejected_items.append({"url": url, "reason": reason, "suggestion": info["suggestion"], "code": info["code"]})
+            continue
+        unsupported_reason = get_unsupported_media_url_reason(url)
+        if unsupported_reason:
+            info = classify_extraction_failure(url, unsupported_reason)
+            rejected_items.append({"url": url, "reason": unsupported_reason, "suggestion": info["suggestion"], "code": info["code"]})
+            continue
+        valid_urls.append(url)
+    return valid_urls, rejected_items
+
+
+def _build_url_recovery_reply(
+    chat_state: dict,
+    url: str,
+    error_msg: str,
+    user_note: str | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Build diagnostic failure message with suggestions and interactive recovery buttons."""
+    _evict_expired_chat_items(chat_state, "url_retry_")
+    info = classify_extraction_failure(url, error_msg)
+    retry_id = str(uuid.uuid4())[:8]
+    chat_state[f"url_retry_{retry_id}"] = {
+        "url": url,
+        "user_note": user_note,
+        "status": "pending",
+        "created_at": time.time(),
+    }
+
+    lines = [
+        error_msg.strip() or "⚠️ 無法取得該連結的內容。",
+        "",
+        f"💡 <b>建議處理方式：</b>{html.escape(info['suggestion'])}",
+    ]
+    if "排查代碼：" not in (error_msg or ""):
+        lines.append(f"🔎 <code>排查代碼：{html.escape(info['code'])}</code>")
+    lines.append("\n請問您希望如何處理？")
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    if info.get("can_force_audio"):
+        buttons.append([InlineKeyboardButton("🎙️ 改用 Whisper 音訊轉錄並摘要", callback_data=f"url_act:{retry_id}:force_audio")])
+    if info.get("retryable"):
+        buttons.append([InlineKeyboardButton("🔄 重新嘗試抓取", callback_data=f"url_act:{retry_id}:retry")])
+    if user_note:
+        buttons.append([InlineKeyboardButton("💬 改為僅就我的文字與 AI 討論", callback_data=f"url_act:{retry_id}:chat_note")])
+    buttons.append([InlineKeyboardButton("❌ 略過 / 取消", callback_data=f"url_act:{retry_id}:cancel")])
+
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+
+
+def _build_batch_intent_card(
+    valid_urls: list[str],
+    rejected_items: list[dict],
+    dropped_count: int,
+    user_note: str | None,
+    batch_id: str,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Render an interactive intent-confirmation card for multi-URL inputs."""
+    lines = [f"📋 <b>偵測到多個連結</b>（可處理 <b>{len(valid_urls)}</b> 筆）："]
+    for idx, url in enumerate(valid_urls, 1):
+        display_url = url if len(url) <= 75 else f"{url[:72]}..."
+        lines.append(f"{idx}. <code>{html.escape(display_url)}</code>")
+
+    if dropped_count > 0:
+        lines.append(f"⚠️ <i>為避免阻塞資源，其餘 {dropped_count} 筆超出單次上限（10 筆）已略過。</i>")
+
+    if rejected_items:
+        lines.append(f"\n🚫 <b>預檢略過 {len(rejected_items)} 筆不支援／受保護連結：</b>")
+        for item in rejected_items:
+            short_u = item["url"] if len(item["url"]) <= 60 else f"{item['url'][:57]}..."
+            lines.append(
+                f"• <code>{html.escape(short_u)}</code>\n"
+                f"  原因：<code>{html.escape(item['code'])}</code> — {html.escape(item['suggestion'])}"
+            )
+
+    if user_note:
+        preview = user_note if len(user_note) <= 120 else f"{user_note[:117]}..."
+        lines.append(f"\n📝 <b>附帶備註／提問：</b><blockquote>{html.escape(preview)}</blockquote>")
+        lines.append("<i>（選擇「個別逐篇處理」時會套用至每一篇；選擇「整合／比較」時會針對所有來源一同回應）</i>")
+
+    lines.append("\n請問您希望如何處理這批連結？")
+
+    n = len(valid_urls)
+    if n == 1:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ 繼續處理這 1 筆有效連結", callback_data=f"batch:{batch_id}:individual")],
+            [InlineKeyboardButton("📄 僅轉逐字稿 (.txt)", callback_data=f"batch:{batch_id}:transcript")],
+            [InlineKeyboardButton("❌ 取消", callback_data=f"batch:{batch_id}:cancel")],
+        ])
+    else:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"📑 個別逐篇處理（{n} 篇）", callback_data=f"batch:{batch_id}:individual")],
+            [
+                InlineKeyboardButton("🧩 整合成單篇綜合重點", callback_data=f"batch:{batch_id}:digest"),
+                InlineKeyboardButton("⚖️ 跨來源比較差異", callback_data=f"batch:{batch_id}:compare"),
+            ],
+            [
+                InlineKeyboardButton("📄 僅批次轉逐字稿 (.txt)", callback_data=f"batch:{batch_id}:transcript"),
+                InlineKeyboardButton("❌ 取消", callback_data=f"batch:{batch_id}:cancel"),
+            ],
+        ])
+    return "\n".join(lines), keyboard
 
 
 def _fetch_boa_answer() -> str:
@@ -984,12 +1107,13 @@ async def _finalize_and_deliver_summary(
     source_label: str,
     discord_prefix: str,
     send_email: bool = True,
+    summary_override: tuple[str, str | None] | None = None,
 ) -> None:
     target_chat_state = chat_state if chat_state is not None else user_data
     language = user_data.get("language", "zh-TW")
     selected_model = user_data.get("selected_model", None)
 
-    summary, ai_title = await run_blocking(
+    summary, ai_title = summary_override if summary_override is not None else await run_blocking(
         summarize,
         text_array,
         language=language,
@@ -1052,6 +1176,386 @@ async def _finalize_and_deliver_summary(
         summary_with_original,
         reply_markup=get_summary_quick_reply_keyboard(),
     )
+
+
+async def _deliver_extracted_or_ad_hidden(
+    *,
+    bot,
+    chat_id: int,
+    user_id: int | None,
+    user_data: dict,
+    chat_state: dict,
+    status_msg,
+    text_array: list[str],
+    source_input: str,
+    user_note: str | None,
+    default_title: str,
+    raw_title: str | None = None,
+    source_label: str = "text input",
+) -> None:
+    """Run Clef ad decision check (when enabled) and deliver summary or ad-hidden card."""
+    user_ad_pref = user_data.get("ad_filter", None)
+    is_url_input = is_url(source_input)
+    if is_decision_ad_filter_enabled(user_ad_pref):
+        is_ad, _decision_data = await run_blocking(
+            is_advertisement_content,
+            text_array,
+            url=source_input if is_url_input else None,
+            mongo_collection=decision_collection,
+            timeout=CLEF_TIMEOUT_SECONDS,
+        )
+        if is_ad:
+            await _delete_msg(bot, chat_id, status_msg)
+            _evict_expired_ad_hidden(chat_state)
+            submission_id = str(uuid.uuid4())[:8]
+            chat_state[f"ad_hidden_{submission_id}"] = {
+                "text_array": text_array,
+                "user_input": source_input,
+                "user_note": user_note,
+                "created_at": time.time(),
+            }
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👁️ 仍要查看摘要", callback_data=f"show_ad:{submission_id}")]
+            ])
+            title_hint = ""
+            if is_url_input:
+                t = raw_title or await run_blocking(get_web_title, source_input)
+                if is_valid_raw_title(t):
+                    title_hint = f"📌 {html.escape(t)}\n\n"
+            ad_msg = (
+                f"{title_hint}"
+                "🚫 <b>【廣告內容已自動隱藏】</b>\n\n"
+                "經 Clef 決策模型判定，此內容包含高度商業宣傳、廣告行銷或垃圾訊息，已自動隱藏。\n\n"
+                "💡 若您仍需要對此內容生成摘要，可點擊下方按鈕強制查看。"
+            )
+            await bot.send_message(
+                chat_id=chat_id,
+                text=ad_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            return
+
+    original_url = source_input if is_url_input else None
+    resolved_raw_title = raw_title
+    if is_url_input and resolved_raw_title is None:
+        resolved_raw_title = await run_blocking(get_web_title, source_input, False)
+
+    await _finalize_and_deliver_summary(
+        bot=bot,
+        chat_id=chat_id,
+        user_id=user_id,
+        user_data=user_data,
+        chat_state=chat_state,
+        status_msg=status_msg,
+        text_array=text_array,
+        original_url=original_url,
+        raw_title=resolved_raw_title,
+        user_note=user_note,
+        default_title=default_title,
+        source_label=source_label,
+        discord_prefix="🔔 新的摘要已生成：",
+    )
+
+
+async def _extract_url_for_batch(url: str) -> tuple[list[str] | None, str | None, str | None]:
+    """Extract content and title for a single URL within a batch with wall-clock timeout."""
+    try:
+        raw_res = await asyncio.wait_for(
+            run_blocking(process_user_input, url),
+            timeout=URL_PROCESSING_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        return (
+            None,
+            None,
+            f"⏱️ 網址處理逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成）。\n排查代碼：URL_PROCESSING_TIMEOUT",
+        )
+    except Exception as exc:
+        logger.warning("Batch extraction error for %s: %s", url, exc, exc_info=True)
+        return None, None, f"⚠️ 擷取過程發生錯誤：{exc}"
+
+    if isinstance(raw_res, tuple):
+        if len(raw_res) == 2 and not raw_res[0]:
+            return None, None, str(raw_res[1])
+        text_array = raw_res[0]
+    else:
+        text_array = raw_res
+
+    if is_extraction_error(text_array):
+        return None, None, text_array[0]
+    if not text_array:
+        return None, None, "⚠️ 未能從該連結擷取到任何有效內容。"
+
+    raw_title = await run_blocking(get_web_title, url, False)
+    return text_array, raw_title, None
+
+
+async def _execute_batch_individual(
+    *,
+    bot,
+    chat_id: int,
+    user_id: int | None,
+    user_data: dict,
+    chat_state: dict,
+    status_msg,
+    batch_id: str,
+    saved: dict,
+    urls_to_run: list[str],
+) -> None:
+    language = user_data.get("language", "zh-TW")
+    default_title = "Text Summary" if language == "en" else "短文之摘要"
+    user_note = saved.get("user_note")
+    total = len(urls_to_run)
+    succeeded = 0
+    failed_items: list[dict] = []
+
+    for idx, url in enumerate(urls_to_run, 1):
+        short_u = url if len(url) <= 65 else f"{url[:62]}..."
+        try:
+            await _reply_or_edit(
+                bot,
+                chat_id,
+                status_msg,
+                f"⏳ 正在個別處理（{idx}/{total}）：\n{short_u}",
+            )
+        except Exception:
+            pass
+
+        text_array, raw_title, err_msg = await _extract_url_for_batch(url)
+        if err_msg or not text_array:
+            info = classify_extraction_failure(url, err_msg)
+            failed_items.append({"url": url, "error": err_msg or "無法擷取內容", "code": info["code"], "suggestion": info["suggestion"]})
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"❌ <b>第 {idx}/{total} 筆失敗</b>：<code>{html.escape(short_u)}</code>\n"
+                    f"原因：{html.escape(err_msg or '無法擷取內容')}\n"
+                    f"💡 建議：{html.escape(info['suggestion'])}"
+                ),
+                parse_mode="HTML",
+            )
+            continue
+
+        await _deliver_extracted_or_ad_hidden(
+            bot=bot,
+            chat_id=chat_id,
+            user_id=user_id,
+            user_data=user_data,
+            chat_state=chat_state,
+            status_msg=None,
+            text_array=text_array,
+            source_input=url,
+            user_note=user_note,
+            default_title=default_title,
+            raw_title=raw_title,
+        )
+        succeeded += 1
+
+    if failed_items:
+        saved["failed_urls"] = [item["url"] for item in failed_items]
+        saved["status"] = "partial_failed"
+        retry_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"🔄 僅重試失敗的 {len(failed_items)} 筆", callback_data=f"batch:{batch_id}:retry_individual")],
+            [InlineKeyboardButton("❌ 結束", callback_data=f"batch:{batch_id}:cancel")],
+        ])
+        await _reply_or_edit(
+            bot,
+            chat_id,
+            status_msg,
+            f"⚠️ 批次個別處理完成：成功 {succeeded} 筆，失敗 {len(failed_items)} 筆。請問是否重試失敗項目？",
+            reply_markup=retry_kb,
+        )
+    else:
+        chat_state.pop(f"batch_intent_{batch_id}", None)
+        await _reply_or_edit(bot, chat_id, status_msg, f"✅ 批次個別處理完成：全部 {succeeded} 筆已輸出！")
+
+
+async def _execute_batch_synthesis(
+    *,
+    bot,
+    chat_id: int,
+    user_id: int | None,
+    user_data: dict,
+    chat_state: dict,
+    status_msg,
+    batch_id: str,
+    saved: dict,
+    mode: str,
+    urls_to_extract: list[str],
+) -> None:
+    sources: list[dict] = list(saved.get("sources") or [])
+    failed_items: list[dict] = []
+    total = len(urls_to_extract)
+    mode_label = "跨來源比較分析" if mode == "compare" else "單篇綜合重點"
+
+    for idx, url in enumerate(urls_to_extract, 1):
+        short_u = url if len(url) <= 65 else f"{url[:62]}..."
+        try:
+            await _reply_or_edit(
+                bot,
+                chat_id,
+                status_msg,
+                f"⏳ 正在擷取內容以準備「{mode_label}」（{idx}/{total}）：\n{short_u}",
+            )
+        except Exception:
+            pass
+
+        text_array, raw_title, err_msg = await _extract_url_for_batch(url)
+        if err_msg or not text_array:
+            info = classify_extraction_failure(url, err_msg)
+            failed_items.append({"url": url, "error": err_msg or "無法擷取內容", "code": info["code"], "suggestion": info["suggestion"]})
+        else:
+            sources.append({"url": url, "title": raw_title, "text_array": text_array})
+
+    if failed_items:
+        saved["sources"] = sources
+        saved["failed_urls"] = [item["url"] for item in failed_items]
+        saved["status"] = "awaiting_partial_decision"
+        lines = [f"⚠️ <b>準備「{mode_label}」時有 {len(failed_items)} 筆擷取失敗</b>（已成功 {len(sources)} 筆）："]
+        for item in failed_items:
+            short_u = item["url"] if len(item["url"]) <= 60 else f"{item['url'][:57]}..."
+            lines.append(
+                f"• <code>{html.escape(short_u)}</code>\n"
+                f"  原因：<code>{html.escape(item['code'])}</code> — {html.escape(item['suggestion'])}"
+            )
+        lines.append("\n請問您希望如何繼續？")
+        buttons: list[list[InlineKeyboardButton]] = []
+        if sources:
+            buttons.append([InlineKeyboardButton(f"✅ 僅用成功的 {len(sources)} 筆繼續{mode_label}", callback_data=f"batch:{batch_id}:proceed_{mode}")])
+        buttons.append([InlineKeyboardButton(f"🔄 重試失敗的 {len(failed_items)} 筆", callback_data=f"batch:{batch_id}:retry_{mode}")])
+        if sources:
+            buttons.append([InlineKeyboardButton(f"📑 改為只對成功的 {len(sources)} 筆個別摘要", callback_data=f"batch:{batch_id}:fallback_individual")])
+        buttons.append([InlineKeyboardButton("❌ 取消", callback_data=f"batch:{batch_id}:cancel")])
+        await _reply_or_edit(bot, chat_id, status_msg, "\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+        return
+
+    if not sources:
+        chat_state.pop(f"batch_intent_{batch_id}", None)
+        await _reply_or_edit(bot, chat_id, status_msg, "❌ 所有連結皆未能擷取有效內容，無法整合。")
+        return
+
+    await _deliver_batch_synthesis_result(
+        bot=bot,
+        chat_id=chat_id,
+        user_id=user_id,
+        user_data=user_data,
+        chat_state=chat_state,
+        status_msg=status_msg,
+        batch_id=batch_id,
+        saved=saved,
+        mode=mode,
+        sources=sources,
+    )
+
+
+async def _deliver_batch_synthesis_result(
+    *,
+    bot,
+    chat_id: int,
+    user_id: int | None,
+    user_data: dict,
+    chat_state: dict,
+    status_msg,
+    batch_id: str,
+    saved: dict,
+    mode: str,
+    sources: list[dict],
+) -> None:
+    language = user_data.get("language", "zh-TW")
+    selected_model = user_data.get("selected_model", None)
+    user_note = saved.get("user_note")
+    mode_label = "跨來源比較分析" if mode == "compare" else "單篇綜合重點"
+    try:
+        await _reply_or_edit(bot, chat_id, status_msg, f"🤖 正在將 {len(sources)} 份來源進行「{mode_label}」中，請稍候...")
+    except Exception:
+        pass
+
+    summary, ai_title = await run_blocking(
+        _service_summarize_batch,
+        sources,
+        mode=mode,
+        language=language,
+        selected_model=selected_model,
+        user_note=user_note,
+        gpt_caller=call_gpt_api,
+    )
+    if is_summary_error_message(summary):
+        await _reply_or_edit(bot, chat_id, status_msg, summary or "⚠️ 跨來源整合生成失敗，請稍後再試。")
+        return
+
+    source_list_md = "\n".join(
+        f"{idx}. [{sanitize_raw_title(s.get('title') or '', max_length=100) or s['url']}]({s['url']})"
+        for idx, s in enumerate(sources, 1)
+    )
+    summary_with_refs = f"{summary}\n\n---\n\n📚 **整合來源清單（共 {len(sources)} 筆）**\n{source_list_md}"
+    combined_raw_chunks = [
+        f"[{idx}] {s.get('title') or s['url']}\n" + "\n".join(s.get("text_array") or [])
+        for idx, s in enumerate(sources, 1)
+    ]
+    default_title = f"{mode_label}（{len(sources)} 篇）"
+
+    await _finalize_and_deliver_summary(
+        bot=bot,
+        chat_id=chat_id,
+        user_id=user_id,
+        user_data=user_data,
+        chat_state=chat_state,
+        status_msg=status_msg,
+        text_array=combined_raw_chunks,
+        original_url=None,
+        raw_title=f"{mode_label}（共 {len(sources)} 篇）",
+        user_note=user_note,
+        default_title=default_title,
+        source_label=", ".join(s["url"] for s in sources),
+        discord_prefix=f"🔔 新的{mode_label}已生成：",
+        summary_override=(summary_with_refs, ai_title),
+    )
+    chat_state.pop(f"batch_intent_{batch_id}", None)
+
+
+async def _execute_batch_transcript(
+    *,
+    bot,
+    chat_id: int,
+    status_msg,
+    batch_id: str,
+    chat_state: dict,
+    urls_to_run: list[str],
+) -> None:
+    total = len(urls_to_run)
+    succeeded = 0
+    failed_count = 0
+    for idx, url in enumerate(urls_to_run, 1):
+        short_u = url if len(url) <= 65 else f"{url[:62]}..."
+        try:
+            await _reply_or_edit(bot, chat_id, status_msg, f"⏳ 正在擷取逐字稿／全文（{idx}/{total}）：\n{short_u}")
+        except Exception:
+            pass
+        text_array, raw_title, err_msg = await _extract_url_for_batch(url)
+        if err_msg or not text_array:
+            failed_count += 1
+            info = classify_extraction_failure(url, err_msg)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"❌ <b>第 {idx}/{total} 筆逐字稿失敗</b>：<code>{html.escape(short_u)}</code>\n"
+                    f"原因：{html.escape(err_msg or '無法擷取內容')}\n"
+                    f"💡 建議：{html.escape(info['suggestion'])}"
+                ),
+                parse_mode="HTML",
+            )
+            continue
+
+        content = "\n".join(text_array) + "\n"
+        bio = io.BytesIO(content.encode("utf-8"))
+        bio.name = f"transcript_{idx}.txt"
+        caption = f"📄 [{idx}/{total}] {raw_title or short_u}"
+        await bot.send_document(chat_id=chat_id, document=bio, filename=bio.name, caption=caption[:1024])
+        succeeded += 1
+
+    chat_state.pop(f"batch_intent_{batch_id}", None)
+    await _reply_or_edit(bot, chat_id, status_msg, f"✅ 批次逐字稿輸出完成：成功 {succeeded} 筆，失敗 {failed_count} 筆。")
 
 
 async def _handle_quick_reply_action(
@@ -1538,6 +2042,253 @@ async def handle_button_click(update, context):
         else:
             context.user_data["ad_filter"] = False
             await query.edit_message_text("🛡️ 廣告決策過濾已更新為：🔴 已關閉")
+        return
+
+    if query.data.startswith("batch:"):
+        parts = query.data.split(":", 2)
+        if len(parts) != 3:
+            return
+        batch_id, batch_action = parts[1], parts[2]
+        chat_state = _get_chat_state(context)
+        _evict_expired_chat_items(chat_state, "batch_intent_")
+        saved = chat_state.get(f"batch_intent_{batch_id}")
+        if not saved:
+            await query.edit_message_text("⌛ 此批次連結確認已過期，請重新貼上連結。")
+            return
+
+        if batch_action == "cancel":
+            chat_state.pop(f"batch_intent_{batch_id}", None)
+            await query.edit_message_text("🗑️ 已取消此批次處理。")
+            return
+
+        if saved.get("status") == "running":
+            await query.answer("⏳ 此批次正在處理中，請稍候...", show_alert=False)
+            return
+
+        chat_id = update.effective_chat.id
+        saved["status"] = "running"
+        try:
+            if batch_action == "individual":
+                await _execute_batch_individual(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    saved=saved,
+                    urls_to_run=list(saved.get("urls") or []),
+                )
+            elif batch_action == "retry_individual":
+                await _execute_batch_individual(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    saved=saved,
+                    urls_to_run=list(saved.get("failed_urls") or []),
+                )
+            elif batch_action in ("digest", "compare"):
+                await _execute_batch_synthesis(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    saved=saved,
+                    mode=batch_action,
+                    urls_to_extract=list(saved.get("urls") or []),
+                )
+            elif batch_action in ("retry_digest", "retry_compare"):
+                mode = batch_action.split("_", 1)[1]
+                await _execute_batch_synthesis(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    saved=saved,
+                    mode=mode,
+                    urls_to_extract=list(saved.get("failed_urls") or []),
+                )
+            elif batch_action in ("proceed_digest", "proceed_compare"):
+                mode = batch_action.split("_", 1)[1]
+                sources = list(saved.get("sources") or [])
+                if not sources:
+                    await query.edit_message_text("❌ 沒有可用的成功來源可供整合。")
+                    chat_state.pop(f"batch_intent_{batch_id}", None)
+                    return
+                await _deliver_batch_synthesis_result(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    saved=saved,
+                    mode=mode,
+                    sources=sources,
+                )
+            elif batch_action == "fallback_individual":
+                sources = list(saved.get("sources") or [])
+                language = context.user_data.get("language", "zh-TW")
+                default_title = "Text Summary" if language == "en" else "短文之摘要"
+                await query.edit_message_text(f"📑 改為對成功的 {len(sources)} 筆來源各自產出單篇摘要...")
+                for src in sources:
+                    await _deliver_extracted_or_ad_hidden(
+                        bot=context.bot,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        user_data=context.user_data,
+                        chat_state=chat_state,
+                        status_msg=None,
+                        text_array=src["text_array"],
+                        source_input=src["url"],
+                        user_note=saved.get("user_note"),
+                        default_title=default_title,
+                        raw_title=src.get("title"),
+                    )
+                chat_state.pop(f"batch_intent_{batch_id}", None)
+            elif batch_action == "transcript":
+                await _execute_batch_transcript(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    status_msg=query.message,
+                    batch_id=batch_id,
+                    chat_state=chat_state,
+                    urls_to_run=list(saved.get("urls") or []),
+                )
+        except Exception as e:
+            logger.warning("Batch action %s failed: %s", batch_action, e, exc_info=True)
+            saved["status"] = "pending"
+            await _reply_or_edit(context.bot, chat_id, query.message, f"❌ 批次處理發生錯誤：{e}")
+        return
+
+    if query.data.startswith("url_act:"):
+        parts = query.data.split(":", 2)
+        if len(parts) != 3:
+            return
+        retry_id, url_action = parts[1], parts[2]
+        chat_state = _get_chat_state(context)
+        _evict_expired_chat_items(chat_state, "url_retry_")
+        saved = chat_state.get(f"url_retry_{retry_id}")
+        if not saved:
+            await query.edit_message_text("⌛ 此操作已過期，請重新傳送連結或文字。")
+            return
+
+        if url_action == "cancel":
+            chat_state.pop(f"url_retry_{retry_id}", None)
+            await query.edit_message_text("🗑️ 已略過此項目。")
+            return
+
+        if saved.get("status") == "running":
+            await query.answer("⏳ 正在處理中，請稍候...", show_alert=False)
+            return
+
+        chat_id = update.effective_chat.id
+        saved["status"] = "running"
+        target_url = saved.get("url")
+        user_note = saved.get("user_note")
+        language = context.user_data.get("language", "zh-TW")
+        default_title = "Text Summary" if language == "en" else "短文之摘要"
+
+        try:
+            if url_action == "chat_note":
+                if not user_note:
+                    await query.edit_message_text("⚠️ 沒有可討論的附帶文字。")
+                    chat_state.pop(f"url_retry_{retry_id}", None)
+                    return
+                await query.edit_message_text("💬 正在針對您的文字備註與提問生成回覆...")
+                selected_model = context.user_data.get("selected_model", None)
+                answer = await run_blocking(call_gpt_api, user_note, None, selected_model=selected_model)
+                clean_answer, _ = sanitize_model_output(answer or "")
+                final_answer = clean_answer.strip() or (answer or "").strip() or "⚠️ AI 模型暫時無回應，請稍後再試。"
+                await _delete_msg(context.bot, chat_id, query.message)
+                for i in range(0, len(final_answer), 4000):
+                    await context.bot.send_message(chat_id=chat_id, text=final_answer[i : i + 4000])
+                chat_state.pop(f"url_retry_{retry_id}", None)
+                return
+
+            if url_action == "force_audio":
+                await query.edit_message_text("🎙️ 正在強制下載影片音訊並以 Whisper 轉錄，請稍候...")
+                text_array = await asyncio.wait_for(
+                    run_blocking(audio_transcription, target_url),
+                    timeout=URL_PROCESSING_TIMEOUT_SECONDS,
+                )
+                if is_extraction_error(text_array) or not text_array:
+                    err = text_array[0] if text_array else "音頻轉錄失敗。"
+                    saved["status"] = "pending"
+                    rec_text, rec_kb = _build_url_recovery_reply(chat_state, target_url or "", err, user_note=user_note)
+                    await query.edit_message_text(rec_text, reply_markup=rec_kb, parse_mode="HTML")
+                    chat_state.pop(f"url_retry_{retry_id}", None)
+                    return
+                raw_title = await run_blocking(get_web_title, target_url, False)
+                await _deliver_extracted_or_ad_hidden(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    text_array=text_array,
+                    source_input=target_url,
+                    user_note=user_note,
+                    default_title=default_title,
+                    raw_title=raw_title,
+                )
+                chat_state.pop(f"url_retry_{retry_id}", None)
+                return
+
+            if url_action == "retry":
+                await query.edit_message_text("🔄 正在重新抓取與處理該連結，請稍候...")
+                text_array, raw_title, err_msg = await _extract_url_for_batch(target_url)
+                if err_msg or not text_array:
+                    rec_text, rec_kb = _build_url_recovery_reply(
+                        chat_state,
+                        target_url or "",
+                        err_msg or "⚠️ 仍無法取得內容。",
+                        user_note=user_note,
+                    )
+                    await query.edit_message_text(rec_text, reply_markup=rec_kb, parse_mode="HTML")
+                    chat_state.pop(f"url_retry_{retry_id}", None)
+                    return
+                await _deliver_extracted_or_ad_hidden(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_data=context.user_data,
+                    chat_state=chat_state,
+                    status_msg=query.message,
+                    text_array=text_array,
+                    source_input=target_url,
+                    user_note=user_note,
+                    default_title=default_title,
+                    raw_title=raw_title,
+                )
+                chat_state.pop(f"url_retry_{retry_id}", None)
+                return
+        except TimeoutError:
+            rec_text, rec_kb = _build_url_recovery_reply(
+                chat_state,
+                target_url or "",
+                f"⏱️ 網址處理逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成）。\n排查代碼：URL_PROCESSING_TIMEOUT",
+                user_note=user_note,
+            )
+            await query.edit_message_text(rec_text, reply_markup=rec_kb, parse_mode="HTML")
+            chat_state.pop(f"url_retry_{retry_id}", None)
+        except Exception as e:
+            logger.warning("URL recovery action %s failed: %s", url_action, e, exc_info=True)
+            saved["status"] = "pending"
+            await query.edit_message_text(f"❌ 重試處理時發生錯誤：{e}")
         return
 
     if query.data.startswith("show_ad:"):
@@ -2127,6 +2878,69 @@ async def handle(action, update, context):
                             await context.bot.send_message(chat_id=chat_id, text=answer[i : i + 4000], reply_markup=markup)
                     return
 
+                parsed_multi = parse_urls_and_user_note(user_input)
+                if len(parsed_multi["urls"]) >= 2:
+                    valid_urls, rejected_items = await run_blocking(_preflight_check_urls, parsed_multi["urls"])
+                    if not valid_urls:
+                        err_lines = ["❌ <b>偵測到的多個連結目前皆無法處理：</b>"]
+                        for item in rejected_items:
+                            short_u = item["url"] if len(item["url"]) <= 60 else f"{item['url'][:57]}..."
+                            err_lines.append(
+                                f"• <code>{html.escape(short_u)}</code>\n"
+                                f"  原因：<code>{html.escape(item['code'])}</code>\n"
+                                f"  💡 建議：{html.escape(item['suggestion'])}"
+                            )
+                        reply_markup = None
+                        if parsed_multi["user_note"]:
+                            _evict_expired_chat_items(chat_state, "url_retry_")
+                            retry_id = str(uuid.uuid4())[:8]
+                            chat_state[f"url_retry_{retry_id}"] = {
+                                "url": None,
+                                "user_note": parsed_multi["user_note"],
+                                "status": "pending",
+                                "created_at": time.time(),
+                            }
+                            err_lines.append("\n偵測到您有附帶文字備註，請問是否改為僅就您的文字進行 AI 討論？")
+                            reply_markup = InlineKeyboardMarkup([
+                                [InlineKeyboardButton("💬 僅針對我的文字與 AI 討論", callback_data=f"url_act:{retry_id}:chat_note")],
+                                [InlineKeyboardButton("❌ 關閉", callback_data=f"url_act:{retry_id}:cancel")],
+                            ])
+                        await _reply_or_edit(
+                            context.bot,
+                            chat_id,
+                            processing_message,
+                            "\n".join(err_lines),
+                            reply_markup=reply_markup,
+                            parse_mode="HTML",
+                        )
+                        return
+
+                    _evict_expired_chat_items(chat_state, "batch_intent_")
+                    batch_id = str(uuid.uuid4())[:8]
+                    chat_state[f"batch_intent_{batch_id}"] = {
+                        "urls": valid_urls,
+                        "rejected": rejected_items,
+                        "user_note": parsed_multi["user_note"],
+                        "status": "pending",
+                        "created_at": time.time(),
+                    }
+                    card_text, card_kb = _build_batch_intent_card(
+                        valid_urls=valid_urls,
+                        rejected_items=rejected_items,
+                        dropped_count=parsed_multi["dropped_count"],
+                        user_note=parsed_multi["user_note"],
+                        batch_id=batch_id,
+                    )
+                    await _reply_or_edit(
+                        context.bot,
+                        chat_id,
+                        processing_message,
+                        card_text,
+                        reply_markup=card_kb,
+                        parse_mode="HTML",
+                    )
+                    return
+
                 extracted_url, user_note = parse_url_and_user_note(user_input)
 
                 if not extracted_url and not is_explicit_summary_request(user_input):
@@ -2194,15 +3008,19 @@ async def handle(action, update, context):
                         user_id,
                         user_input,
                     )
+                    timeout_err = (
+                        f"⏱️ 網址處理逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成），已略過此項目以避免阻塞後續排隊訊息。\n"
+                        "原因：來源網站回應過慢或媒體檔案過大無法於時限內擷取。\n"
+                        "排查代碼：URL_PROCESSING_TIMEOUT"
+                    )
+                    rec_text, rec_kb = _build_url_recovery_reply(chat_state, user_input, timeout_err, user_note=user_note)
                     await _reply_or_edit(
                         context.bot,
                         chat_id,
                         processing_message,
-                        (
-                            f"⏱️ 網址處理逾時（超過 {int(URL_PROCESSING_TIMEOUT_SECONDS)} 秒未完成），已略過此項目以避免阻塞後續排隊訊息。\n"
-                            "原因：來源網站回應過慢或媒體檔案過大無法於時限內擷取。\n"
-                            "排查代碼：URL_PROCESSING_TIMEOUT"
-                        ),
+                        rec_text,
+                        reply_markup=rec_kb,
+                        parse_mode="HTML",
                     )
                     return
 
@@ -2215,8 +3033,24 @@ async def handle(action, update, context):
                             user_input,
                             str(text_array[1]).replace("\n", " | "),
                         )
-                        await _delete_msg(context.bot, chat_id, processing_message)
-                        await context.bot.send_message(chat_id=chat_id, text=text_array[1])
+                        if is_url(user_input):
+                            rec_text, rec_kb = _build_url_recovery_reply(
+                                chat_state,
+                                user_input,
+                                str(text_array[1]),
+                                user_note=user_note,
+                            )
+                            await _reply_or_edit(
+                                context.bot,
+                                chat_id,
+                                processing_message,
+                                rec_text,
+                                reply_markup=rec_kb,
+                                parse_mode="HTML",
+                            )
+                        else:
+                            await _delete_msg(context.bot, chat_id, processing_message)
+                            await context.bot.send_message(chat_id=chat_id, text=text_array[1])
                         return
                     text_array = text_array[0]
 
@@ -2228,59 +3062,30 @@ async def handle(action, update, context):
                         user_input,
                         str(text_array[0]).replace("\n", " | "),
                     )
-                    await _delete_msg(context.bot, chat_id, processing_message)
-                    await context.bot.send_message(chat_id=chat_id, text=text_array[0])
+                    if is_url(user_input):
+                        rec_text, rec_kb = _build_url_recovery_reply(
+                            chat_state,
+                            user_input,
+                            str(text_array[0]),
+                            user_note=user_note,
+                        )
+                        await _reply_or_edit(
+                            context.bot,
+                            chat_id,
+                            processing_message,
+                            rec_text,
+                            reply_markup=rec_kb,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await _delete_msg(context.bot, chat_id, processing_message)
+                        await context.bot.send_message(chat_id=chat_id, text=text_array[0])
                     return
 
                 if text_array:
-                    user_ad_pref = context.user_data.get("ad_filter", None)
-                    is_url_input = is_url(user_input)
-                    if is_decision_ad_filter_enabled(user_ad_pref):
-                        is_ad, _decision_data = await run_blocking(
-                            is_advertisement_content,
-                            text_array,
-                            url=user_input if is_url_input else None,
-                            mongo_collection=decision_collection,
-                            timeout=CLEF_TIMEOUT_SECONDS,
-                        )
-                        if is_ad:
-                            await _delete_msg(context.bot, chat_id, processing_message)
-                            _evict_expired_ad_hidden(chat_state)
-                            submission_id = str(uuid.uuid4())[:8]
-                            chat_state[f"ad_hidden_{submission_id}"] = {
-                                "text_array": text_array,
-                                "user_input": user_input,
-                                "user_note": user_note,
-                                "created_at": time.time(),
-                            }
-                            keyboard = InlineKeyboardMarkup([
-                                [InlineKeyboardButton("👁️ 仍要查看摘要", callback_data=f"show_ad:{submission_id}")]
-                            ])
-                            title_hint = ""
-                            if is_url_input:
-                                t = await run_blocking(get_web_title, user_input)
-                                if is_valid_raw_title(t):
-                                    title_hint = f"📌 {html.escape(t)}\n\n"
-                            ad_msg = (
-                                f"{title_hint}"
-                                "🚫 <b>【廣告內容已自動隱藏】</b>\n\n"
-                                "經 Clef 決策模型判定，此內容包含高度商業宣傳、廣告行銷或垃圾訊息，已自動隱藏。\n\n"
-                                "💡 若您仍需要對此內容生成摘要，可點擊下方按鈕強制查看。"
-                            )
-                            await context.bot.send_message(
-                                chat_id=chat_id,
-                                text=ad_msg,
-                                reply_markup=keyboard,
-                                parse_mode="HTML",
-                            )
-                            return
-
-                    original_url = user_input if is_url_input else None
-                    raw_title = await run_blocking(get_web_title, user_input, False) if is_url_input else None
                     language = context.user_data.get("language", "zh-TW")
                     default_title = "Text Summary" if language == "en" else "短文之摘要"
-
-                    await _finalize_and_deliver_summary(
+                    await _deliver_extracted_or_ad_hidden(
                         bot=context.bot,
                         chat_id=chat_id,
                         user_id=user_id,
@@ -2288,20 +3093,33 @@ async def handle(action, update, context):
                         chat_state=chat_state,
                         status_msg=processing_message,
                         text_array=text_array,
-                        original_url=original_url,
-                        raw_title=raw_title,
+                        source_input=user_input,
                         user_note=user_note,
                         default_title=default_title,
-                        source_label="text input",
-                        discord_prefix="🔔 新的摘要已生成：",
                     )
                 else:
-                    await _reply_or_edit(
-                        context.bot,
-                        chat_id,
-                        processing_message,
-                        "無法處理輸入的文本。請確保提供了有效的文本或URL。",
-                    )
+                    if is_url(user_input):
+                        rec_text, rec_kb = _build_url_recovery_reply(
+                            chat_state,
+                            user_input,
+                            "⚠️ 無法從此網址擷取到文字內容。",
+                            user_note=user_note,
+                        )
+                        await _reply_or_edit(
+                            context.bot,
+                            chat_id,
+                            processing_message,
+                            rec_text,
+                            reply_markup=rec_kb,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await _reply_or_edit(
+                            context.bot,
+                            chat_id,
+                            processing_message,
+                            "無法處理輸入的文本。請提供有效的網址、較長的文章內容，或直接輸入問題與我對話。",
+                        )
             except Exception as e:
                 logger.warning("Error in summarize action: %s", e, exc_info=True)
                 await _reply_or_edit(context.bot, chat_id, processing_message, "處理您的請求時發生錯誤，請稍後再試。")

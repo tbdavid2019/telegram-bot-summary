@@ -23,6 +23,19 @@ An AI-powered text summarization Telegram bot that generates concise summaries o
 🤖 Bot: ✅ 對話歷史已清除
 ```
 
+### 場景 1b: 一次貼入多個連結（意圖確認與批次處理）
+```
+👤 用戶: https://www.youtube.com/watch?v=dWNrafD9g38
+         https://www.youtube.com/watch?v=5ahr3tfpikc
+         https://www.youtube.com/watch?v=pWJCEjfyUas
+         這三支都在講什麼核心趨勢？
+🤖 Bot: 📋 偵測到多個連結（可處理 3 筆）＋ 附帶備註
+        請問您希望如何處理這批連結？
+        [📑 個別逐篇處理（3 篇）]  ← 附帶備註會套用到每一篇
+        [🧩 整合成單篇綜合重點] [⚖️ 跨來源比較差異]
+        [📄 僅批次轉逐字稿 (.txt)] [❌ 取消]
+```
+
 ### 場景 2: 切換語言
 ```
 👤 用戶: /lang

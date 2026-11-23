@@ -393,6 +393,129 @@ class AuditFixesTests(unittest.IsolatedAsyncioTestCase):
         app = legacy._build_bot_application("")
         self.assertGreater(app.concurrent_updates, 1)
 
+    async def test_multi_url_intent_confirmation_individual_with_shared_note_and_partial_recovery(self):
+        import app.legacy as legacy
+
+        bot_mock = MagicMock()
+        bot_mock.send_message = AsyncMock()
+        bot_mock.edit_message_text = AsyncMock()
+        bot_mock.delete_message = AsyncMock()
+        ctx = SimpleNamespace(bot=bot_mock, user_data={}, chat_data={})
+
+        multi_upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            message=SimpleNamespace(
+                text=(
+                    "https://www.youtube.com/watch?v=dWNrafD9g38\n"
+                    "https://www.youtube.com/channel/UCCTEGdb7XMWn123456\n"
+                    "https://www.youtube.com/watch?v=5ahr3tfpikc\n"
+                    "請幫我整理這幾支的核心重點"
+                )
+            ),
+        )
+        with (
+            patch.object(legacy, "show_processing", 0),
+            patch.object(legacy, "allowed_users", ""),
+            patch.object(legacy, "is_safe_url", return_value=True),
+        ):
+            await legacy.handle("summarize", multi_upd, ctx)
+
+        # Should ask intent with buttons and pre-flight skip the channel URL
+        sent_kwargs = bot_mock.send_message.call_args.kwargs
+        self.assertIn("偵測到多個連結", sent_kwargs["text"])
+        self.assertIn("UNSUPPORTED_YOUTUBE_CHANNEL", sent_kwargs["text"])
+        self.assertIn("請幫我整理這幾支的核心重點", sent_kwargs["text"])
+        batch_keys = [k for k in ctx.chat_data if k.startswith("batch_intent_")]
+        self.assertEqual(len(batch_keys), 1)
+        batch_id = batch_keys[0].removeprefix("batch_intent_")
+        self.assertEqual(len(ctx.chat_data[batch_keys[0]]["urls"]), 2)
+
+        # Clicking "individual" runs both valid URLs and applies shared user_note to each
+        delivered_notes = []
+
+        async def _fake_deliver(**kwargs):
+            delivered_notes.append((kwargs["original_url"], kwargs["user_note"]))
+
+        query_msg = MagicMock()
+        query_msg.message_id = 500
+        cb_upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            callback_query=SimpleNamespace(
+                data=f"batch:{batch_id}:individual",
+                answer=AsyncMock(),
+                edit_message_text=AsyncMock(),
+                message=query_msg,
+            ),
+        )
+        with (
+            patch.object(legacy, "allowed_users", ""),
+            patch.object(legacy, "is_decision_ad_filter_enabled", return_value=False),
+            patch.object(legacy, "process_user_input", return_value=["字幕內容段落"]),
+            patch.object(legacy, "get_web_title", return_value="影片標題"),
+            patch.object(legacy, "_finalize_and_deliver_summary", side_effect=_fake_deliver),
+        ):
+            await legacy.handle_button_click(cb_upd, ctx)
+
+        self.assertEqual(
+            delivered_notes,
+            [
+                ("https://www.youtube.com/watch?v=dWNrafD9g38", "請幫我整理這幾支的核心重點"),
+                ("https://www.youtube.com/watch?v=5ahr3tfpikc", "請幫我整理這幾支的核心重點"),
+            ],
+        )
+
+    async def test_single_url_no_subtitles_offers_force_audio_recovery(self):
+        import app.legacy as legacy
+
+        bot_mock = MagicMock()
+        bot_mock.send_message = AsyncMock()
+        bot_mock.edit_message_text = AsyncMock()
+        bot_mock.delete_message = AsyncMock()
+        ctx = SimpleNamespace(bot=bot_mock, user_data={}, chat_data={})
+
+        upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            message=SimpleNamespace(text="https://www.youtube.com/watch?v=dWNrafD9g38"),
+        )
+        with (
+            patch.object(legacy, "show_processing", 0),
+            patch.object(legacy, "allowed_users", ""),
+            patch.object(legacy, "process_user_input", return_value=["該影片沒有可用的字幕，且音頻轉換功能未啟用。"]),
+        ):
+            await legacy.handle("summarize", upd, ctx)
+
+        err_kwargs = bot_mock.send_message.call_args.kwargs
+        self.assertIn("NO_SUBTITLES", err_kwargs["text"])
+        self.assertIn("請問您希望如何處理", err_kwargs["text"])
+        retry_keys = [k for k in ctx.chat_data if k.startswith("url_retry_")]
+        self.assertEqual(len(retry_keys), 1)
+        retry_id = retry_keys[0].removeprefix("url_retry_")
+
+        # Clicking force_audio invokes audio_transcription and delivers summary
+        cb_upd = SimpleNamespace(
+            effective_chat=SimpleNamespace(id=111, type="private"),
+            effective_user=SimpleNamespace(id=111),
+            callback_query=SimpleNamespace(
+                data=f"url_act:{retry_id}:force_audio",
+                answer=AsyncMock(),
+                edit_message_text=AsyncMock(),
+                message=MagicMock(message_id=600),
+            ),
+        )
+        with (
+            patch.object(legacy, "allowed_users", ""),
+            patch.object(legacy, "is_decision_ad_filter_enabled", return_value=False),
+            patch.object(legacy, "audio_transcription", return_value=["[00:05] 轉錄內容"]),
+            patch.object(legacy, "get_web_title", return_value="地球上的水究竟是哪來的？"),
+            patch.object(legacy, "_finalize_and_deliver_summary", new=AsyncMock()) as mock_deliver,
+        ):
+            await legacy.handle_button_click(cb_upd, ctx)
+
+        mock_deliver.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()

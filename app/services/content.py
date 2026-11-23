@@ -221,6 +221,81 @@ def parse_url_and_user_note(text: str, max_note_chars: int = 4000) -> tuple[str 
     return normalized_url, user_note
 
 
+def parse_urls_and_user_note(
+    text: str,
+    max_urls: int = 10,
+    max_note_chars: int = 4000,
+) -> dict:
+    """Extract all deduplicated URLs and optional shared user note from a message.
+
+    Preserves long-article protection: if substantial prose (>600 chars before/around scattered
+    links, or >1200 chars overall with multiple embedded links) surrounds the URLs, returns empty
+    ``urls`` so the text is treated as a single long article instead of a batch URL list.
+    """
+    empty_result = {"urls": [], "dropped_count": 0, "user_note": None}
+    if not text or not isinstance(text, str):
+        return empty_result
+
+    matches = list(_URL_IN_TEXT_RE.finditer(text))
+    if not matches:
+        return empty_result
+
+    unique_urls: list[str] = []
+    seen_urls: set[str] = set()
+    spans: list[tuple[int, int]] = []
+
+    for match in matches:
+        raw_clean_url = _clean_matched_url(match.group(0))
+        normalized_url = _normalize_extracted_url(raw_clean_url)
+        if not normalized_url:
+            continue
+        spans.append((match.start(), match.start() + len(raw_clean_url)))
+        if normalized_url not in seen_urls:
+            seen_urls.add(normalized_url)
+            unique_urls.append(normalized_url)
+
+    if not unique_urls:
+        return empty_result
+
+    if len(unique_urls) == 1:
+        single_url, single_note = parse_url_and_user_note(text, max_note_chars=max_note_chars)
+        if not single_url:
+            return empty_result
+        return {"urls": [single_url], "dropped_count": 0, "user_note": single_note}
+
+    # Build remaining non-URL text in O(n)
+    parts: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        segment = text[cursor:start]
+        if segment:
+            parts.append(segment)
+        cursor = end
+    tail = text[cursor:]
+    if tail:
+        parts.append(tail)
+
+    joined_remaining = ""
+    for piece in parts:
+        cleaned_piece = piece.strip(" \t\r\n:：-–—")
+        if cleaned_piece:
+            joined_remaining = f"{joined_remaining}\n{cleaned_piece}" if joined_remaining else cleaned_piece
+    remaining = re.sub(r"\n{3,}", "\n\n", joined_remaining).strip()
+
+    first_url_at_start = spans[0][0] == 0 or text[: spans[0][0]].isspace()
+    if (not first_url_at_start and len(remaining) > 600) or len(remaining) > 1200:
+        return empty_result
+
+    if not remaining or _is_pure_punctuation_or_whitespace(remaining) or remaining.lower() in _PURE_SUMMARY_COMMANDS:
+        user_note = None
+    else:
+        user_note = remaining[:max_note_chars].strip() or None
+
+    capped_urls = unique_urls[:max_urls]
+    dropped_count = max(0, len(unique_urls) - len(capped_urls))
+    return {"urls": capped_urls, "dropped_count": dropped_count, "user_note": user_note}
+
+
 def format_user_note_block(
     user_note: str | None,
     note_label: str | None = None,
@@ -1020,6 +1095,84 @@ def is_extraction_error(text_array) -> bool:
         or "排查代碼：UNSUPPORTED_" in msg
         or "排查代碼：URL_PROCESSING_TIMEOUT" in msg
     )
+
+
+def classify_extraction_failure(url: str | None, error_msg: str | None) -> dict:
+    """Classify an extraction failure into diagnostic code, recovery capabilities, and user guidance."""
+    msg = (error_msg or "").strip()
+    if "UNSUPPORTED_YOUTUBE_CHANNEL" in msg:
+        return {
+            "code": "UNSUPPORTED_YOUTUBE_CHANNEL",
+            "retryable": False,
+            "can_force_audio": False,
+            "suggestion": "請進入該頻道後，複製「單支影片」的網址（watch?v=...、youtu.be/... 或 /shorts/...）再傳送給我。",
+        }
+    if "UNSUPPORTED_YOUTUBE_PLAYLIST" in msg:
+        return {
+            "code": "UNSUPPORTED_YOUTUBE_PLAYLIST",
+            "retryable": False,
+            "can_force_audio": False,
+            "suggestion": "請打開播放清單中的任一影片，複製帶有 `v=` 影片 ID 的網址再傳送給我。",
+        }
+    if "UNSUPPORTED_YOUTUBE_PAGE" in msg:
+        return {
+            "code": "UNSUPPORTED_YOUTUBE_PAGE",
+            "retryable": False,
+            "can_force_audio": False,
+            "suggestion": "請貼上具體的單支影片網址，而非 YouTube 首頁或搜尋／分類頁。",
+        }
+    if "私有/內部網路網址" in msg or "Blocked private" in msg:
+        return {
+            "code": "SSRF_BLOCKED",
+            "retryable": False,
+            "can_force_audio": False,
+            "suggestion": "請確認網址為公開可存取的 http/https 外部連結，無法讀取內網或本機位址。",
+        }
+    if "URL_PROCESSING_TIMEOUT" in msg or "逾時" in msg:
+        return {
+            "code": "URL_PROCESSING_TIMEOUT",
+            "retryable": True,
+            "can_force_audio": False,
+            "suggestion": "來源網站回應較慢或影片過長導致逾時；可點選「重新嘗試」，或改貼重點文字讓我直接摘要。",
+        }
+    if "沒有可用的字幕" in msg or "暫時無法轉錄" in msg or "無法獲取字幕" in msg:
+        return {
+            "code": "NO_SUBTITLES",
+            "retryable": True,
+            "can_force_audio": bool(url and any(k in url.lower() for k in ("youtube.com", "youtu.be", "bilibili.com", "vimeo.com"))),
+            "suggestion": "此影片目前無可用字幕；建議點選「改用 Whisper 音訊轉錄」，或稍後再重試。",
+        }
+    if "無法下載該網頁" in msg or "提取的內容為空" in msg or "不支持解析" in msg:
+        return {
+            "code": "SCRAPE_EMPTY",
+            "retryable": True,
+            "can_force_audio": False,
+            "suggestion": "目標網站可能有防爬蟲、需登入或為純 JS 動態頁面；建議直接複製網頁內文貼給我進行摘要，或稍後重試。",
+        }
+    return {
+        "code": "EXTRACTION_ERROR",
+        "retryable": True,
+        "can_force_audio": False,
+        "suggestion": "請確認網址是否公開有效（未刪除或設為私人），可選擇「重新嘗試」或直接貼上文字內容。",
+    }
+
+
+def build_batch_combined_text(sources: list[dict], max_total_chars: int = 28000) -> list[str]:
+    """Combine multiple extracted sources into balanced, clearly demarcated text chunks within budget."""
+    if not sources:
+        return []
+    per_source_budget = max(1800, max_total_chars // len(sources))
+    combined_blocks: list[str] = []
+    for idx, src in enumerate(sources, 1):
+        title = sanitize_raw_title(src.get("title") or "", max_length=150) or f"來源 {idx}"
+        url = (src.get("url") or "").strip()
+        raw_text = "\n".join(str(x) for x in (src.get("text_array") or []) if x).strip()
+        safe_body = escape_prompt_boundaries(raw_text)
+        if len(safe_body) > per_source_budget:
+            safe_body = safe_body[:per_source_budget].rstrip() + "\n...(此來源過長，已依配額截斷)..."
+        header = f"【來源 {idx}】{title}\n網址：{url}" if url else f"【來源 {idx}】{title}"
+        combined_blocks.append(f"{header}\n內容：\n{safe_body}")
+    return combined_blocks
 
 _TITLE_LINE_PATTERN = re.compile(
     r"^(?:#{1,6}\s*)?(?:[*_]{1,2}\s*)?(?:seo\s*標題|標題|title)(?:\s*[*_]{1,2})?\s*[:：]\s*(.*?)\s*$",

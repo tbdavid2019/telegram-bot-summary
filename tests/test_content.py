@@ -712,6 +712,60 @@ class TestContentHelpers(unittest.TestCase):
         for url in allowed_cases:
             self.assertIsNone(get_unsupported_media_url_reason(url), f"Expected allowed for {url}")
 
+    def test_parse_urls_and_user_note_multi_and_long_article_guard(self):
+        from app.services.content import parse_urls_and_user_note, classify_extraction_failure
+        from app.services.summarization import summarize_batch
+
+        multi = parse_urls_and_user_note(
+            "https://www.youtube.com/watch?v=dWNrafD9g38\n"
+            "https://www.youtube.com/watch?v=5ahr3tfpikc\n"
+            "https://www.youtube.com/watch?v=pWJCEjfyUas\n"
+            "https://www.youtube.com/watch?v=dWNrafD9g38\n"
+            "這三支都在講什麼核心趨勢？"
+        )
+        self.assertEqual(
+            multi["urls"],
+            [
+                "https://www.youtube.com/watch?v=dWNrafD9g38",
+                "https://www.youtube.com/watch?v=5ahr3tfpikc",
+                "https://www.youtube.com/watch?v=pWJCEjfyUas",
+            ],
+        )
+        self.assertEqual(multi["dropped_count"], 0)
+        self.assertEqual(multi["user_note"], "這三支都在講什麼核心趨勢？")
+
+        # Long prose article embedding multiple reference links must NOT trigger batch URL mode
+        long_prose = ("這是一段很長的新聞背景說明文章。" * 45) + "\n參考 https://example.com/a 與 https://example.com/b " + ("延伸論述。" * 30)
+        self.assertEqual(parse_urls_and_user_note(long_prose)["urls"], [])
+
+        # Classification of extraction failures
+        no_sub = classify_extraction_failure("https://www.youtube.com/watch?v=abc", "該影片沒有可用的字幕，且音頻轉換功能未啟用。")
+        self.assertEqual(no_sub["code"], "NO_SUBTITLES")
+        self.assertTrue(no_sub["can_force_audio"])
+        self.assertTrue(no_sub["retryable"])
+
+        # Cross-source batch summarization
+        with self.subTest("summarize_batch"):
+            calls = []
+
+            def fake_gpt(prompt, sys_msgs, **kwargs):
+                calls.append((prompt, sys_msgs))
+                return "TITLE: 跨來源對比測試標題\n### 💬 【針對筆記與疑問回應】\n回答\n---\n### ⓵ 【容易懂 Easy Know】\n內容"
+
+            summary, ai_title = summarize_batch(
+                [
+                    {"url": "https://example.com/1", "title": "第一篇", "text_array": ["內容 A"]},
+                    {"url": "https://example.com/2", "title": "第二篇", "text_array": ["內容 B"]},
+                ],
+                mode="compare",
+                user_note="哪一個觀點比較合理？",
+                gpt_caller=fake_gpt,
+            )
+            self.assertEqual(ai_title, "跨來源對比測試標題")
+            self.assertIn("### 💬 【針對筆記與疑問回應】", summary)
+            self.assertIn("【來源 1】第一篇", calls[0][0])
+            self.assertIn("【來源 2】第二篇", calls[0][0])
+
 
 if __name__ == "__main__":
     unittest.main()
